@@ -1,0 +1,34 @@
+[network]
+listen_addresses = [
+  "/ip4/0.0.0.0/tcp/8443/ws",
+  "/ip6/::/tcp/8443/ws",
+]
+seed_nodes = [
+  { address = "/dns4/aurora.seed.nimiq.com/tcp/443/wss" },
+  { address = "/dns4/catalyst.seed.nimiq.network/tcp/443/wss" },
+  { address = "/dns4/cipher.seed.nimiq-network.com/tcp/443/wss" },
+  { address = "/dns4/eclipse.seed.nimiq.cloud/tcp/443/wss" },
+  { address = "/dns4/lumina.seed.nimiq.systems/tcp/443/wss" },
+  { address = "/dns4/nebula.seed.nimiq.com/tcp/443/wss" },
+  { address = "/dns4/nexus.seed.nimiq.network/tcp/443/wss" },
+  { address = "/dns4/polaris.seed.nimiq-network.com/tcp/443/wss" },
+  { address = "/dns4/photon.seed.nimiq.cloud/tcp/443/wss" },
+  { address = "/dns4/pulsar.seed.nimiq.systems/tcp/443/wss" },
+  { address = "/dns4/quasar.seed.nimiq.com/tcp/443/wss" },
+  { address = "/dns4/solstice.seed.nimiq.network/tcp/443/wss" },
+  { address = "/dns4/vortex.seed.nimiq.cloud/tcp/443/wss" },
+  { address = "/dns4/zenith.seed.nimiq.systems/tcp/443/wss" },
+]
+
+[consensus]
+network = "main-albatross"
+sync_mode = "history"
+index_history = true
+
+[rpc-server]
+bind = "0.0.0.0"
+port = 8648
+
+[log]
+level = "info"
+statistics = 10

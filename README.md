@@ -94,6 +94,8 @@ It provides the `getTransactionsByAddress` RPC endpoint with cursor-based pagina
 docker compose up
 ```
 
+Nimiq chain data is persisted on disk at `./.data/nimiq` by default (configurable with `NIMIQ_DATA_DIR`).
+
 This spins up:
 - **Neo4j** — Graph database on `bolt://localhost:7687` (browser at `http://localhost:7474`)
 - **API** — Elysia server on `http://localhost:3001`

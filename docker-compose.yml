@@ -22,7 +22,9 @@ services:
     environment:
       NIMIQ_OVERRIDE_MAINNET_CONFIG: /genesis/nimiq-genesis-main-albatross.toml
     volumes:
-      - nimiqdata:/root/.nimiq
+      # Keep chain data on the host so it survives container/volume recreation.
+      - ${NIMIQ_DATA_DIR:-./.data/nimiq}:/home/nimiq/.nimiq
+      - ./docker/nimiq-client.toml:/home/nimiq/.nimiq/client.toml:ro
       - genesis:/genesis:ro
     depends_on:
       genesis-init:
@@ -78,7 +80,7 @@ services:
       db:
         condition: service_healthy
       node:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "bun -e 'fetch(\"http://localhost:3001/health\").then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))'"]
       interval: 15s
@@ -141,5 +143,4 @@ services:
 
 volumes:
   neo4jdata:
-  nimiqdata:
   genesis:
