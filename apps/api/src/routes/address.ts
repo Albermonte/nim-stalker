@@ -8,6 +8,7 @@ import { addressCache } from '../lib/address-cache';
 import { AddressType } from '@nim-stalker/shared';
 import { jobTracker } from '../lib/job-tracker';
 import { runIndexing, mapAccountType } from '../services/indexing';
+import { enforceSensitiveEndpointPolicy } from '../lib/security';
 
 export const addressRoutes = new Elysia({ prefix: '/address' })
   // GET /address/:addr - Get address metadata
@@ -254,7 +255,12 @@ export const addressRoutes = new Elysia({ prefix: '/address' })
   // POST /address/:addr/index - Trigger background indexing for an address
   .post(
     '/:addr/index',
-    async ({ params, set }) => {
+    async ({ params, set, request }) => {
+      const policyError = enforceSensitiveEndpointPolicy(request, set, 'address-index');
+      if (policyError) {
+        return policyError;
+      }
+
       const { addr } = params;
 
       if (!isValidNimiqAddress(addr)) {
@@ -300,4 +306,3 @@ export const addressRoutes = new Elysia({ prefix: '/address' })
       }),
     }
   );
-

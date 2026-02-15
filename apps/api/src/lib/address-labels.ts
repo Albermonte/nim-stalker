@@ -3,6 +3,7 @@ import { formatAddress } from './address-utils';
 
 const VALIDATORS_API_URL = 'https://validators-api-mainnet.pages.dev/api/v1/validators';
 const REFRESH_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+const DEFAULT_FETCH_TIMEOUT_MS = 5_000;
 
 interface ValidatorInfo {
   name: string;
@@ -14,18 +15,24 @@ class AddressLabelService {
   private validators = new Map<string, ValidatorInfo>();
   private refreshInterval: Timer | null = null;
 
-  async initialize(): Promise<void> {
-    await this.fetchValidators();
+  async initialize(options?: { startupTimeoutMs?: number; refreshTimeoutMs?: number }): Promise<void> {
+    const startupTimeoutMs = options?.startupTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
+    const refreshTimeoutMs = options?.refreshTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
+
+    await this.fetchValidators(startupTimeoutMs);
     this.refreshInterval = setInterval(() => {
-      this.fetchValidators().catch((err) => {
+      this.fetchValidators(refreshTimeoutMs).catch((err) => {
         console.warn('[AddressLabelService] Failed to refresh validators:', err);
       });
     }, REFRESH_INTERVAL_MS);
   }
 
-  private async fetchValidators(): Promise<void> {
+  private async fetchValidators(timeoutMs: number): Promise<void> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
     try {
-      const response = await fetch(VALIDATORS_API_URL);
+      const response = await fetch(VALIDATORS_API_URL, { signal: controller.signal });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
@@ -53,6 +60,8 @@ class AddressLabelService {
     } catch (err) {
       console.warn('[AddressLabelService] Failed to fetch validators:', err);
       // Keep stale data if we had any
+    } finally {
+      clearTimeout(timeout);
     }
   }
 

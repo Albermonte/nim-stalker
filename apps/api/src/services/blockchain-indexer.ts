@@ -2,6 +2,7 @@ import type { Block, Subscription } from '@albermonte/nimiq-rpc-client-ts'
 import { ensureRpcClient, getRpcClient, mapTransaction } from './rpc-client'
 import { writeTransactionBatch, updateEdgeAggregatesForPairs } from './indexing'
 import { readTx, writeTx } from '../lib/neo4j'
+import { config } from '../lib/config'
 
 const META_KEY = 'indexer'
 
@@ -70,15 +71,68 @@ function unwrap<T>(result: { data?: T; error?: { code: number; message: string }
   return data as T
 }
 
+// --- Consensus readiness ---
+
+async function waitForConsensus(pollInterval = 10_000): Promise<void> {
+  const rpcUrl = config.nimiqRpcUrl
+  let lastLog = 0
+
+  while (state.running) {
+    try {
+      const res = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', method: 'isConsensusEstablished', params: [], id: 1 }),
+      })
+      if (res.ok) {
+        const data = await res.json() as { result?: boolean }
+        if (data.result === true) {
+          console.log('[backfill] Consensus established')
+          return
+        }
+        if (Date.now() - lastLog > 60_000) {
+          console.log('[backfill] Node reachable, waiting for consensus...')
+          lastLog = Date.now()
+        }
+      }
+    } catch {
+      if (Date.now() - lastLog > 60_000) {
+        console.warn('[backfill] Node not reachable, waiting...')
+        lastLog = Date.now()
+      }
+    }
+    await new Promise(r => setTimeout(r, pollInterval))
+  }
+}
+
+// --- RPC readiness ---
+
+async function waitForRpc(maxRetries = 20, baseDelay = 3000): Promise<number> {
+  const client = getRpcClient()
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await client.blockchain.getBatchNumber()
+      return unwrap<number>(result)
+    } catch (error) {
+      const delay = Math.min(baseDelay * 2 ** (attempt - 1), 60_000)
+      console.warn(`[backfill] RPC not ready (attempt ${attempt}/${maxRetries}): ${error instanceof Error ? error.message : error}`)
+      if (attempt === maxRetries) throw error
+      await new Promise(r => setTimeout(r, delay))
+    }
+  }
+  throw new Error('RPC readiness check exhausted') // unreachable
+}
+
 // --- Backfill worker ---
 
 async function runBackfill(): Promise<void> {
+  await waitForConsensus()
+
   state.lastProcessedBatch = await getLastProcessedBatch()
   const startBatch = Math.max(1, state.lastProcessedBatch + 1)
 
+  const currentBatch = await waitForRpc()
   const client = getRpcClient()
-  const currentBatchResult = await client.blockchain.getBatchNumber()
-  const currentBatch = unwrap<number>(currentBatchResult)
 
   if (startBatch > currentBatch) {
     console.log(`[backfill] Already caught up (batch ${state.lastProcessedBatch}/${currentBatch})`)
@@ -135,6 +189,8 @@ async function runBackfill(): Promise<void> {
 // --- Live subscription ---
 
 async function startLiveSubscription(): Promise<void> {
+  await waitForConsensus()
+
   try {
     const client = getRpcClient()
     subscription = await client.blockchainStreams.subscribeForBlocks(undefined, {
@@ -233,10 +289,23 @@ export function startBlockchainIndexer(): { stop: () => Promise<void> } {
     console.error('[indexer] Live subscription startup failed:', err)
   })
 
-  // Start backfill in background
-  runBackfill().catch((err) => {
-    console.error('[indexer] Backfill failed:', err)
-  })
+  // Start backfill in background with retry
+  ;(async () => {
+    const maxAttempts = 3
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await runBackfill()
+        return
+      } catch (err) {
+        console.error(`[indexer] Backfill failed (attempt ${attempt}/${maxAttempts}):`, err)
+        if (attempt < maxAttempts && state.running) {
+          const delay = 30_000 * attempt
+          console.log(`[indexer] Retrying backfill in ${delay / 1000}s...`)
+          await new Promise(r => setTimeout(r, delay))
+        }
+      }
+    }
+  })()
 
   return {
     stop: async () => {

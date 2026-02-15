@@ -2,7 +2,7 @@ import { Elysia } from 'elysia';
 import { getDriver } from '../lib/neo4j';
 
 export const healthRoutes = new Elysia({ prefix: '/health' })
-  .get('/', async () => {
+  .get('/', async ({ set }) => {
     try {
       await getDriver().verifyConnectivity();
 
@@ -14,13 +14,14 @@ export const healthRoutes = new Elysia({ prefix: '/health' })
         },
       };
     } catch (error) {
+      set.status = 503;
       return {
         status: 'unhealthy',
         timestamp: new Date().toISOString(),
         services: {
           database: 'disconnected',
         },
-        error: error instanceof Error ? error.message : 'Unknown error',
+        reason: 'database_unavailable',
       };
     }
   });

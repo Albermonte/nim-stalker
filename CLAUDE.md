@@ -30,9 +30,10 @@ nim-stalker/
 ├── apps/
 │   ├── api/                   # Elysia REST API (Bun)
 │   │   └── src/
-│   │       ├── lib/           # neo4j, config, address-cache, address-utils
-│   │       ├── routes/        # health, address, graph
-│   │       ├── services/      # nimiq-rpc, graph, path-finder, subgraph-finder, transaction-utils
+│   │       ├── data/          # address-book.ts (static address labels)
+│   │       ├── lib/           # neo4j, config, address-cache, address-utils, address-labels, security, job-tracker, concurrency
+│   │       ├── routes/        # health, address, graph, transaction, jobs, indexer
+│   │       ├── services/      # rpc-client, graph, path-finder, subgraph-finder, indexing, blockchain-indexer
 │   │       └── test/          # setup, fixtures/, mocks/, helpers/
 │   └── web/                   # Next.js frontend
 │       ├── app/               # App Router (globals.css, layout, page)
@@ -42,19 +43,21 @@ nim-stalker/
 │       ├── types/             # cytoscape-cola.d.ts (module declarations)
 │       └── test/              # setup, helpers/, mocks/
 ├── packages/shared/           # Shared types
-└── docker-compose.yml         # Neo4j + API + Web
+├── docker-compose.yml         # Neo4j + API + Web (development)
+└── docker-compose.prod.yml    # Full production stack (genesis-init, Nimiq node, Neo4j, API, Web, optional nginx)
 ```
 
 **Neo4j Graph Model:**
 - `(:Address {id, type, label, balance, firstSeenAt, lastSeenAt, indexStatus, indexedAt})` — nodes
 - `[:TRANSACTION {hash, value, fee, blockNumber, timestamp, data}]` — raw transaction relationships
 - `[:TRANSACTED_WITH {txCount, totalValue, firstTxAt, lastTxAt}]` — pre-aggregated edge summaries
+- `(:Meta {key, lastProcessedBatch, totalTransactionsIndexed, updatedAt})` — blockchain indexer state
 
 **Constraints/Indexes** (created at startup via `ensureConstraints()`):
 - Unique: `Address.id`, `TRANSACTION.hash`
 - Index: `Address.indexStatus`, `TRANSACTION.timestamp`, `TRANSACTION.blockNumber`, `TRANSACTED_WITH.txCount`
 
-**API Routes:** `GET /health`, `GET|POST /address/:addr[/transactions|/index]`, `POST /graph/expand`, `GET /graph/path|subgraph|nodes|latest-blocks`
+**API Routes:** `GET /health`, `GET|POST /address/:addr[/transactions|/index]`, `GET /transaction/:hash`, `POST /graph/expand`, `GET /graph/path|subgraph|nodes|latest-blocks`, `GET /jobs`, `WS /jobs/ws`, `GET /indexer/status`
 <!-- END AUTO-MANAGED -->
 
 <!-- AUTO-MANAGED: conventions -->
@@ -79,8 +82,29 @@ nim-stalker/
 
 **Errors:** 400/500 status codes, `{ error }` responses, Error Boundary for graph
 
+**Security:**
+- `security.ts` exports: `isMainOriginRequest()`, `enforceSensitiveEndpointPolicy()`, `_resetSensitiveRateLimiter()`
+- Fixed-window rate limiting (`FixedWindowRateLimiter`), per-IP per-route keys (`{routeKey}:{clientIp}`)
+- Main origin detection: parses hostname from `origin`/`referer` headers, matches against `MAIN_ORIGIN_HOSTS`
+- Protected routes: `POST /address/:addr/index`, `GET /graph/subgraph`, `GET /graph/latest-blocks`
+- Main origin requests get high limit (default 100,000/window), others need `x-api-key` header + lower limit (default 300/window)
+- Rate limit headers: `x-ratelimit-limit`, `x-ratelimit-remaining`, `x-ratelimit-reset`, `retry-after` (on 429)
+
+**Address Labels:**
+- `address-labels.ts`: `AddressLabelService` singleton via `getAddressLabelService()`
+- Validators API (hourly refresh) + static address book (`data/address-book.ts`)
+- `initialize({ startupTimeoutMs, refreshTimeoutMs })` called at startup
+- Label priority: Validators API > Address Book
+- `getLabel(address)` → name or null, `getIcon(address)` → logo URL or null
+
+**Job Tracking:**
+- `job-tracker.ts`: in-memory Map of `IndexingJob`, pub/sub via `subscribe(fn)` → unsubscribe callback
+- WebSocket broadcast on job updates via `/jobs/ws`
+- Auto-remove completed/failed jobs after 60s
+
 **Environment:**
-- API: `NEO4J_URI` (required), `NEO4J_USER` (default `neo4j`), `NEO4J_PASSWORD` (required), `NIMIQ_RPC_URL` (defaults to `http://localhost:8648`), `PORT=3001`, `CORS_ORIGIN` (required in prod)
+- API: `NEO4J_URI` (required), `NEO4J_USER` (default `neo4j`), `NEO4J_PASSWORD` (required), `NIMIQ_RPC_URL` (defaults to `http://localhost:8648`), `PORT=3001`, `CORS_ORIGIN` (required in prod), `API_KEY` (required in prod)
+- API optional: `MAIN_ORIGIN_HOSTS`, `SENSITIVE_RATE_LIMIT_WINDOW_MS`, `SENSITIVE_RATE_LIMIT_PER_WINDOW`, `SENSITIVE_RATE_LIMIT_MAIN_ORIGIN_PER_WINDOW`
 - Web: `NEXT_PUBLIC_API_URL`
 
 **Graph Design System (Peanut.me inspired):**
@@ -138,17 +162,25 @@ nim-stalker/
 - Layout mode: `layoutMode` ('fcose' | 'cola' | 'multi-root'), `rootNodeIds` (Set). Actions: `setLayoutMode`, `toggleRootNode`, `addRootNode`, `removeRootNode`, `clearRootNodes`. First searched/added address auto-becomes root.
 
 **Caching:**
-- Backend: `addressCache` 60s TTL, batch ops (`getMultiple`, `setMultiple`)
+- Backend: `addressCache` 5 min (300s) TTL, batch ops (`getMultiple`, `setMultiple`), bounded to 50,000 entries
 - Frontend: API client 30s TTL cache
+
+**Blockchain Indexer:**
+- `blockchain-indexer.ts`: backfill worker + live WebSocket subscription, started at app boot via `startBlockchainIndexer()`
+- Meta node (`(:Meta {key: 'indexer'})`) tracks `lastProcessedBatch`, `totalTransactionsIndexed`, `updatedAt`
+- RPC readiness check with exponential backoff (20 retries, 3s base delay, 60s cap)
+- Backfill retries (3 attempts, 30s * attempt delay), progress logged every 100 batches
+- Live subscription via `@albermonte/nimiq-rpc-client-ts` WebSocket with auto-reconnect (5s delay, retries while running)
+- `getIndexerStatus()` returns in-memory state; `getIndexerStatusWithProgress()` adds current batch + progress %
 
 <!-- END AUTO-MANAGED -->
 
 <!-- AUTO-MANAGED: dependencies -->
 ## Dependencies
 
-**Runtime:** `elysia`, `@elysiajs/cors`, `neo4j-driver`, `next`, `react`, `cytoscape`, `cytoscape-fcose`, `cytoscape-cola`, `zustand`, `sonner`, `@nimiq/utils`, `identicons-esm`
+**Runtime:** `elysia`, `@elysiajs/cors`, `neo4j-driver`, `@albermonte/nimiq-rpc-client-ts`, `next` (15.x), `react`, `cytoscape`, `cytoscape-fcose`, `cytoscape-cola`, `zustand`, `sonner`, `@nimiq/utils`, `identicons-esm`
 
-**Build:** `turbo`, `bun`, `typescript`, `tailwindcss`
+**Build:** `turbo`, `bun`, `typescript`, `tailwindcss`, `eslint`, `eslint-config-next`
 
 **Test:** `bun:test`, `@testing-library/react`, `@testing-library/jest-dom`, `happy-dom`
 <!-- END AUTO-MANAGED -->
@@ -165,14 +197,17 @@ nim-stalker/
 - `acdf920`: Subgraph finding with max hops and directed options
 - `294f82c`: Multi-root preset layout engine (deterministic, FNV-1a hashing, collision avoidance); node labels via `truncateAddress` in `/latest-blocks` response
 - `3dd26fd`: Multi-root layout algorithm with graph utilities — graph-utils (adjacency, BFS, node classification), hash-utils (deterministic angles), vector-math, collision avoidance; SVG→PNG async identicon pipeline for zoom-safe rendering; cola layout registration; isolated root handling via optional nodes param in adjacency builder
+- `34c6994`: Security layer (rate limiting, API key auth), blockchain batch indexer + live WebSocket subscription, transaction lookup, job tracking, address labels, production Docker Compose
 
 **Key Decisions:**
 - Elysia over Express (performance, type safety)
 - Neo4j over PostgreSQL (native graph traversal, shortestPath, TRANSACTED_WITH aggregation)
 - Neo4j native `shortestPath`/`allShortestPaths` replacing hand-coded bidirectional BFS
 - Map-based Zustand state (granular updates, proper reactivity)
-- In-memory caching (address 60s, API 30s TTL)
+- In-memory caching (address 5min, API 30s TTL)
 - Bun native test runner (consistency, speed, native TS)
 - Custom deterministic layout over force-directed for stable, reproducible graph positioning (multi-root preset via FNV-1a hashed angles, BFS-based node classification)
 - `nq-*` CSS namespace for design system — scoped Tailwind colors and utility classes prevent conflicts, `--nq-*` custom properties mirror palette
+- Blockchain batch indexer + live WebSocket subscription for full-chain coverage without per-address on-demand indexing gaps
+- `@albermonte/nimiq-rpc-client-ts` for typed RPC + WebSocket streaming (replaces raw JSON-RPC calls)
 <!-- END AUTO-MANAGED -->

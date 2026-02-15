@@ -10,23 +10,23 @@ import {
 describe('format-utils', () => {
   describe('formatNimiqAddress', () => {
     test('formats address without spaces', () => {
-      const result = formatNimiqAddress('NQ42XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX');
-      expect(result).toBe('NQ42 XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX');
+      const result = formatNimiqAddress('NQ15MLJN23YB8FBM61TN7LYG2212LVBG4V19');
+      expect(result).toBe('NQ15 MLJN 23YB 8FBM 61TN 7LYG 2212 LVBG 4V19');
     });
 
     test('normalizes lowercase to uppercase', () => {
-      const result = formatNimiqAddress('nq42xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx');
-      expect(result).toBe('NQ42 XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX');
+      const result = formatNimiqAddress('nq15mljn23yb8fbm61tn7lyg2212lvbg4v19');
+      expect(result).toBe('NQ15 MLJN 23YB 8FBM 61TN 7LYG 2212 LVBG 4V19');
     });
 
     test('preserves already formatted address', () => {
-      const result = formatNimiqAddress('NQ42 XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX');
-      expect(result).toBe('NQ42 XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX');
+      const result = formatNimiqAddress('NQ15 MLJN 23YB 8FBM 61TN 7LYG 2212 LVBG 4V19');
+      expect(result).toBe('NQ15 MLJN 23YB 8FBM 61TN 7LYG 2212 LVBG 4V19');
     });
 
     test('removes extra spaces', () => {
-      const result = formatNimiqAddress('NQ42  XXXX   XXXX XXXX');
-      expect(result).toBe('NQ42 XXXX XXXX XXXX');
+      const result = formatNimiqAddress('NQ15  MLJN   23YB 8FBM');
+      expect(result).toBe('NQ15 MLJN 23YB 8FBM');
     });
 
     test('handles empty string', () => {
@@ -74,18 +74,18 @@ describe('format-utils', () => {
 
   describe('getNimiqWatchUrl', () => {
     test('generates correct URL for formatted address', () => {
-      const result = getNimiqWatchUrl('NQ42 XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX');
-      expect(result).toBe('https://nimiq.watch/#NQ42+XXXX+XXXX+XXXX+XXXX+XXXX+XXXX+XXXX+XXXX');
+      const result = getNimiqWatchUrl('NQ15 MLJN 23YB 8FBM 61TN 7LYG 2212 LVBG 4V19');
+      expect(result).toBe('https://nimiq.watch/#NQ15+MLJN+23YB+8FBM+61TN+7LYG+2212+LVBG+4V19');
     });
 
     test('generates correct URL for unformatted address', () => {
-      const result = getNimiqWatchUrl('NQ42XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX');
-      expect(result).toBe('https://nimiq.watch/#NQ42+XXXX+XXXX+XXXX+XXXX+XXXX+XXXX+XXXX+XXXX');
+      const result = getNimiqWatchUrl('NQ15MLJN23YB8FBM61TN7LYG2212LVBG4V19');
+      expect(result).toBe('https://nimiq.watch/#NQ15+MLJN+23YB+8FBM+61TN+7LYG+2212+LVBG+4V19');
     });
 
     test('normalizes lowercase address', () => {
-      const result = getNimiqWatchUrl('nq42xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx');
-      expect(result).toBe('https://nimiq.watch/#NQ42+XXXX+XXXX+XXXX+XXXX+XXXX+XXXX+XXXX+XXXX');
+      const result = getNimiqWatchUrl('nq15mljn23yb8fbm61tn7lyg2212lvbg4v19');
+      expect(result).toBe('https://nimiq.watch/#NQ15+MLJN+23YB+8FBM+61TN+7LYG+2212+LVBG+4V19');
     });
 
     test('replaces spaces with plus signs', () => {
@@ -123,14 +123,14 @@ describe('format-utils', () => {
 
   describe('truncateAddress', () => {
     test('truncates long address correctly', () => {
-      const address = 'NQ42 XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX';
+      const address = 'NQ15 MLJN 23YB 8FBM 61TN 7LYG 2212 LVBG 4V19';
       const result = truncateAddress(address);
-      expect(result).toBe('NQ42...XXXX');
+      expect(result).toBe('NQ15...4V19');
     });
 
     test('does not truncate short address', () => {
-      const result = truncateAddress('NQ42 XXXX');
-      expect(result).toBe('NQ42 XXXX');
+      const result = truncateAddress('NQ15 MLJN');
+      expect(result).toBe('NQ15 MLJN');
     });
 
     test('handles exactly 11 character address', () => {

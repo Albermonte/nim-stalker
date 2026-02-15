@@ -1,14 +1,18 @@
 /**
  * Shared address validation and formatting utilities for Nimiq addresses
  */
+import { ValidationUtils } from '@nimiq/utils';
 
 /**
  * Validate Nimiq address format (NQ followed by 2 digits and 32 alphanumeric chars)
  * Accepts addresses with or without spaces
  */
 export function isValidNimiqAddress(address: string): boolean {
-  const cleaned = address.replace(/\s/g, '');
-  return /^NQ\d{2}[A-Z0-9]{32}$/i.test(cleaned);
+  const cleaned = address.replace(/\s/g, '').toUpperCase();
+  if (!/^NQ\d{2}[A-Z0-9]{32}$/.test(cleaned)) {
+    return false;
+  }
+  return ValidationUtils.isValidAddress(cleaned);
 }
 
 /**

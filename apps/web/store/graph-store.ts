@@ -203,13 +203,8 @@ export const useGraphStore = create<GraphState & GraphActions>()(
     ...initialState,
 
     addNodes: (nodes) => {
-      const currentNodes = get().nodes;
-      let hasNew = false;
-      for (const node of nodes) {
-        if (!currentNodes.has(node.data.id)) { hasNew = true; break; }
-      }
-      if (!hasNew && nodes.length <= currentNodes.size) return;
-      const newMap = new Map(currentNodes);
+      if (nodes.length === 0) return;
+      const newMap = new Map(get().nodes);
       for (const node of nodes) {
         newMap.set(node.data.id, node);
       }
@@ -217,13 +212,8 @@ export const useGraphStore = create<GraphState & GraphActions>()(
     },
 
     addEdges: (edges) => {
-      const currentEdges = get().edges;
-      let hasNew = false;
-      for (const edge of edges) {
-        if (!currentEdges.has(edge.data.id)) { hasNew = true; break; }
-      }
-      if (!hasNew && edges.length <= currentEdges.size) return;
-      const newMap = new Map(currentEdges);
+      if (edges.length === 0) return;
+      const newMap = new Map(get().edges);
       for (const edge of edges) {
         newMap.set(edge.data.id, edge);
       }
@@ -231,24 +221,20 @@ export const useGraphStore = create<GraphState & GraphActions>()(
     },
 
     addGraphData: (nodes, edges) => {
+      if (nodes.length === 0 && edges.length === 0) return;
+
       const state = get();
-      let hasNewNodes = false;
-      let hasNewEdges = false;
+      const newNodes = new Map(state.nodes);
+      const newEdges = new Map(state.edges);
+
       for (const node of nodes) {
-        if (!state.nodes.has(node.data.id)) { hasNewNodes = true; break; }
+        newNodes.set(node.data.id, node);
       }
+
       for (const edge of edges) {
-        if (!state.edges.has(edge.data.id)) { hasNewEdges = true; break; }
+        newEdges.set(edge.data.id, edge);
       }
-      if (!hasNewNodes && !hasNewEdges) return;
-      const newNodes = hasNewNodes ? new Map(state.nodes) : state.nodes;
-      if (hasNewNodes) {
-        for (const node of nodes) { newNodes.set(node.data.id, node); }
-      }
-      const newEdges = hasNewEdges ? new Map(state.edges) : state.edges;
-      if (hasNewEdges) {
-        for (const edge of edges) { newEdges.set(edge.data.id, edge); }
-      }
+
       set({ nodes: newNodes, edges: newEdges });
     },
 

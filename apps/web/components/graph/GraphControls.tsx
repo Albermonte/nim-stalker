@@ -255,7 +255,7 @@ export function GraphControls() {
           <div>
             <h4 className="nq-label mb-2">Path Finding</h4>
             <ol className="space-y-1 text-xs list-decimal list-inside">
-              <li>Click "Find Path"</li>
+              <li>Click &quot;Find Path&quot;</li>
               <li>Select start node</li>
               <li>Select end node</li>
               <li>View path or exit</li>

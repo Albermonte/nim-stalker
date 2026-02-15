@@ -1,18 +1,39 @@
 services:
+  genesis-init:
+    image: alpine:latest
+    volumes:
+      - genesis:/genesis
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        if [ -s /genesis/nimiq-genesis-main-albatross.toml ]; then
+          echo 'Genesis file already exists'; exit 0
+        fi
+        rm -f /genesis/nimiq-genesis-main-albatross.toml
+        echo 'Downloading genesis file...'
+        wget -O /genesis/nimiq-genesis-main-albatross.toml \
+          https://ipfs.nimiq.io/ipfs/QmWcRRRw4FaKRrznMFt6KemAM35uo9QknMkDaeBzTod33R
+        echo 'Done'
+
   node:
     image: ghcr.io/albermonte/core-rs-albatross-slim:latest
     environment:
       NIMIQ_OVERRIDE_MAINNET_CONFIG: /genesis/nimiq-genesis-main-albatross.toml
     volumes:
       - nimiqdata:/root/.nimiq
-      - ./nimiq-genesis-main-albatross.toml:/genesis/nimiq-genesis-main-albatross.toml:ro
+      - genesis:/genesis:ro
+    depends_on:
+      genesis-init:
+        condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"isConsensusEstablished\",\"params\":[],\"id\":1}' http://localhost:8648 || exit 1"]
+      test: ["CMD-SHELL", "curl -sf -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"isConsensusEstablished\",\"params\":[],\"id\":1}' http://localhost:8648"]
       interval: 15s
       timeout: 10s
-      retries: 10
-      start_period: 60s
+      retries: 40
+      start_period: 300s
 
   db:
     image: neo4j:5-community
@@ -62,8 +83,8 @@ services:
       test: ["CMD-SHELL", "bun -e 'fetch(\"http://localhost:3001/health\").then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))'"]
       interval: 15s
       timeout: 5s
-      retries: 3
-      start_period: 10s
+      retries: 5
+      start_period: 30s
     volumes:
       - ./apps/api/src:/app/apps/api/src
       - ./packages/shared:/app/packages/shared
@@ -121,3 +142,4 @@ services:
 volumes:
   neo4jdata:
   nimiqdata:
+  genesis:

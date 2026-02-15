@@ -7,6 +7,7 @@ import { ensureAddressIndexed } from '../services/indexing';
 import { isValidNimiqAddress, formatAddress, truncateAddress } from '../lib/address-utils';
 import { getAddressLabelService } from '../lib/address-labels';
 import { poolAll } from '../lib/concurrency';
+import { enforceSensitiveEndpointPolicy } from '../lib/security';
 
 export const graphRoutes = new Elysia({ prefix: '/graph' })
   // POST /graph/expand - Expand graph from address(es)
@@ -25,6 +26,30 @@ export const graphRoutes = new Elysia({ prefix: '/graph' })
       // Format addresses
       const formattedAddresses = addresses.map(formatAddress);
 
+      let minValue: bigint | undefined;
+      let maxValue: bigint | undefined;
+
+      if (filters?.minValue != null) {
+        if (!/^\d+$/.test(filters.minValue)) {
+          set.status = 400;
+          return { error: 'Invalid minValue: expected a positive integer string' };
+        }
+        minValue = BigInt(filters.minValue);
+      }
+
+      if (filters?.maxValue != null) {
+        if (!/^\d+$/.test(filters.maxValue)) {
+          set.status = 400;
+          return { error: 'Invalid maxValue: expected a positive integer string' };
+        }
+        maxValue = BigInt(filters.maxValue);
+      }
+
+      if (minValue != null && maxValue != null && minValue > maxValue) {
+        set.status = 400;
+        return { error: 'Invalid value range: minValue cannot be greater than maxValue' };
+      }
+
       try {
         const graphService = getGraphService();
         const result = await graphService.expand({
@@ -34,8 +59,8 @@ export const graphRoutes = new Elysia({ prefix: '/graph' })
             ? {
                 minTimestamp: filters.minTimestamp,
                 maxTimestamp: filters.maxTimestamp,
-                minValue: filters.minValue ? BigInt(filters.minValue) : undefined,
-                maxValue: filters.maxValue ? BigInt(filters.maxValue) : undefined,
+                minValue,
+                maxValue,
                 limit: filters.limit,
               }
             : undefined,
@@ -116,7 +141,12 @@ export const graphRoutes = new Elysia({ prefix: '/graph' })
   // GET /graph/subgraph - Find all nodes and edges on any path between two addresses
   .get(
     '/subgraph',
-    async ({ query, set }) => {
+    async ({ query, set, request }) => {
+      const policyError = enforceSensitiveEndpointPolicy(request, set, 'graph-subgraph');
+      if (policyError) {
+        return policyError;
+      }
+
       const { from, to, maxHops, directed } = query;
 
       // Validate addresses
@@ -233,7 +263,12 @@ export const graphRoutes = new Elysia({ prefix: '/graph' })
   // Retries fetching older blocks if no transactions found (max 6 iterations = 60 blocks)
   .get(
     '/latest-blocks',
-    async ({ query, set }) => {
+    async ({ query, set, request }) => {
+      const policyError = enforceSensitiveEndpointPolicy(request, set, 'graph-latest-blocks');
+      if (policyError) {
+        return policyError;
+      }
+
       const blocksPerBatch = query.count || 10;
       const maxLoops = 6;
 

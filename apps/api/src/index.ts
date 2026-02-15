@@ -16,7 +16,7 @@ import { startBlockchainIndexer } from './services/blockchain-indexer';
 await ensureConstraints();
 
 // Initialize address label service (validators API + address book)
-await getAddressLabelService().initialize();
+await getAddressLabelService().initialize({ startupTimeoutMs: 3000, refreshTimeoutMs: 5000 });
 
 // Start blockchain indexer (backfill + live subscription)
 const indexer = startBlockchainIndexer();
@@ -29,31 +29,6 @@ const app = new Elysia()
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     maxAge: 86400, // Cache preflight responses for 24h
   }))
-  // Gzip compression for JSON responses (70-85% bandwidth reduction on graph data)
-  .mapResponse(({ response, set, request }) => {
-    const acceptEncoding = request.headers.get('accept-encoding') ?? '';
-    if (
-      !acceptEncoding.includes('gzip') ||
-      response === null ||
-      response === undefined
-    ) {
-      return response;
-    }
-
-    // Only compress JSON-like responses above a threshold
-    const body = typeof response === 'object'
-      ? JSON.stringify(response)
-      : typeof response === 'string'
-        ? response
-        : null;
-
-    if (!body || body.length < 1024) return response;
-
-    const compressed = Bun.gzipSync(Buffer.from(body));
-    set.headers['content-encoding'] = 'gzip';
-    set.headers['content-type'] = 'application/json; charset=utf-8';
-    return new Response(compressed, { headers: set.headers as HeadersInit });
-  })
   .use(healthRoutes)
   .use(addressRoutes)
   .use(graphRoutes)

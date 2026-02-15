@@ -57,33 +57,37 @@ describe('address-utils', () => {
     test('rejects address with wrong checksum format', () => {
       expect(isValidNimiqAddress(invalidAddresses.wrongChecksum)).toBe(false);
     });
+
+    test('rejects checksum-invalid addresses even when structure looks valid', () => {
+      expect(isValidNimiqAddress('NQ00 AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA')).toBe(false);
+    });
   });
 
   describe('formatAddress', () => {
     test('formats address with correct spacing', () => {
       const formatted = formatAddress(validAddresses.noSpaces);
-      expect(formatted).toBe('NQ42 XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX');
+      expect(formatted).toBe(validAddresses.basic);
     });
 
     test('normalizes lowercase to uppercase', () => {
       const formatted = formatAddress(validAddresses.lowercase);
-      expect(formatted).toBe('NQ42 XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX');
+      expect(formatted).toBe(validAddresses.basic);
     });
 
     test('normalizes mixed case to uppercase', () => {
       const formatted = formatAddress(validAddresses.mixedCase);
-      expect(formatted).toBe('NQ42 XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX');
+      expect(formatted).toBe(validAddresses.basic);
     });
 
     test('preserves already formatted address', () => {
       const formatted = formatAddress(validAddresses.basic);
-      expect(formatted).toBe('NQ42 XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX');
+      expect(formatted).toBe(validAddresses.basic);
     });
 
     test('handles address with irregular spacing', () => {
-      const irregular = 'NQ42  XXXX   XXXX XXXX XXXX XXXX XXXX XXXX XXXX';
+      const irregular = 'NQ15  MLJN   23YB 8FBM 61TN 7LYG 2212 LVBG 4V19';
       const formatted = formatAddress(irregular);
-      expect(formatted).toBe('NQ42 XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX');
+      expect(formatted).toBe(validAddresses.basic);
     });
 
     test('handles empty string', () => {
@@ -94,15 +98,15 @@ describe('address-utils', () => {
 
   describe('truncateAddress', () => {
     test('truncates long address correctly', () => {
-      const address = 'NQ42 XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX';
+      const address = validAddresses.basic;
       const truncated = truncateAddress(address);
-      expect(truncated).toBe('NQ42...XXXX');
+      expect(truncated).toBe('NQ15...4V19');
     });
 
     test('does not truncate short address', () => {
-      const shortAddr = 'NQ42 XXXX';
+      const shortAddr = 'NQ15 MLJN';
       const truncated = truncateAddress(shortAddr);
-      expect(truncated).toBe('NQ42 XXXX');
+      expect(truncated).toBe('NQ15 MLJN');
     });
 
     test('handles exactly 11 character address', () => {

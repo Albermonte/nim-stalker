@@ -18,6 +18,9 @@ interface Config {
 
   // External APIs
   nimiqRpcUrl: string;
+
+  // Security
+  apiKey: string | undefined;
 }
 
 function getRequiredEnv(name: string): string {
@@ -65,6 +68,7 @@ function validateConfig(): Config {
 
   const corsOrigin = process.env.CORS_ORIGIN;
   const nimiqRpcUrl = getOptionalEnv('NIMIQ_RPC_URL', 'http://localhost:8648');
+  const apiKey = process.env.API_KEY;
 
   // Validate URL format for external APIs
   try {
@@ -77,6 +81,9 @@ function validateConfig(): Config {
   if (nodeEnv === 'production') {
     if (!corsOrigin || corsOrigin === '*') {
       errors.push('CORS_ORIGIN must be explicitly set in production (not * or empty)');
+    }
+    if (!apiKey) {
+      errors.push('API_KEY must be set in production');
     }
   }
 
@@ -95,6 +102,7 @@ function validateConfig(): Config {
     nodeEnv,
     corsOrigin,
     nimiqRpcUrl,
+    apiKey,
   };
 }
 

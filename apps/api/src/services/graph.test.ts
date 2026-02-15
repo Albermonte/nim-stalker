@@ -4,28 +4,85 @@ import { describe, test, expect, mock, beforeEach } from 'bun:test';
 const mockFromId = 'NQ42 AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA';
 const mockToId = 'NQ42 BBBB BBBB BBBB BBBB BBBB BBBB BBBB BBBB';
 
-// Mock neo4j module
-const mockRun = mock(() => Promise.resolve({
-  records: [{
-    get(key: string) {
-      const data: Record<string, unknown> = {
-        fromId: mockFromId,
-        toId: mockToId,
-        txCount: 5,
-        totalValue: '100000',
-        firstTxAt: '2024-01-01T00:00:00.000Z',
-        lastTxAt: '2024-06-01T00:00:00.000Z',
-        // For node details
-        id: mockFromId,
+const mockExpandEdgeRecord = {
+  get(key: string) {
+    const mockNode = (id: string) => ({
+      properties: {
+        id,
         label: null,
         type: 'BASIC',
         balance: '50000',
         indexStatus: 'COMPLETE',
-      };
-      return data[key];
-    },
-  }],
-}));
+        txCount: 10,
+      },
+    });
+
+    const data: Record<string, unknown> = {
+      fromNode: mockNode(mockFromId),
+      toNode: mockNode(mockToId),
+      txCount: 5,
+      totalValue: '100000',
+      firstTxAt: '2024-01-01T00:00:00.000Z',
+      lastTxAt: '2024-06-01T00:00:00.000Z',
+    };
+    return data[key];
+  },
+};
+
+const mockSeedNodeRecord = {
+  get(key: string) {
+    const data: Record<string, unknown> = {
+      id: mockFromId,
+      label: null,
+      type: 'BASIC',
+      balance: '50000',
+      indexStatus: 'COMPLETE',
+      txCount: 10,
+    };
+    return data[key];
+  },
+};
+
+const mockNodeRecord = {
+  get(key: string) {
+    const data: Record<string, unknown> = {
+      id: mockFromId,
+      label: null,
+      type: 'BASIC',
+      balance: '50000',
+      indexStatus: 'COMPLETE',
+      txCount: 10,
+    };
+    return data[key];
+  },
+};
+
+const mockEdgeRecord = {
+  get(key: string) {
+    const data: Record<string, unknown> = {
+      fromId: mockFromId,
+      toId: mockToId,
+      txCount: 5,
+      totalValue: '100000',
+      firstTxAt: '2024-01-01T00:00:00.000Z',
+      lastTxAt: '2024-06-01T00:00:00.000Z',
+    };
+    return data[key];
+  },
+};
+
+const mockRun = mock((query: string) => {
+  if (query.includes('AS fromNode') && query.includes('AS toNode')) {
+    return Promise.resolve({ records: [mockExpandEdgeRecord] });
+  }
+  if (query.includes('RETURN a.id AS id')) {
+    return Promise.resolve({ records: [mockSeedNodeRecord] });
+  }
+  if (query.includes('RETURN a.id AS fromId')) {
+    return Promise.resolve({ records: [mockEdgeRecord] });
+  }
+  return Promise.resolve({ records: [mockNodeRecord] });
+});
 
 mock.module('../lib/neo4j', () => ({
   readTx: mock(async (work: (tx: any) => Promise<any>) => {

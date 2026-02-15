@@ -1,6 +1,14 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test';
 import { validAddresses } from '../test/fixtures/addresses';
 import { formatAddress } from '../lib/address-utils';
+import { _resetSensitiveRateLimiter } from '../lib/security';
+
+process.env.NODE_ENV = 'test';
+process.env.NEO4J_URI = 'bolt://localhost:7687';
+process.env.NEO4J_USER = 'neo4j';
+process.env.NEO4J_PASSWORD = 'test_password';
+process.env.NIMIQ_RPC_URL = 'http://localhost:8648';
+process.env.PORT = '3001';
 
 // Mock neo4j module
 const mockRun = mock(() => Promise.resolve({ records: [] }));
@@ -118,6 +126,11 @@ describe('GET /address/:addr/transactions', () => {
 
 describe('POST /address/:addr/index', () => {
   beforeEach(() => {
+    process.env.NODE_ENV = 'test';
+    process.env.API_KEY = 'secret-key';
+    process.env.SENSITIVE_RATE_LIMIT_PER_WINDOW = '100';
+    process.env.SENSITIVE_RATE_LIMIT_MAIN_ORIGIN_PER_WINDOW = '1000';
+
     mockRun.mockClear();
     mockGetAccount.mockClear();
     mockGetTransactionsByAddress.mockClear();
@@ -129,6 +142,7 @@ describe('POST /address/:addr/index', () => {
     // Default: writeTx succeeds
     mockRun.mockImplementation(() => Promise.resolve({ records: [] }));
     mockHasJob.mockImplementation(() => false);
+    _resetSensitiveRateLimiter();
   });
 
   test('returns INDEXING status immediately (fire-and-forget)', async () => {
@@ -179,5 +193,41 @@ describe('POST /address/:addr/index', () => {
     expect(response.status).toBe(400);
     const body = await response.json();
     expect(body).toHaveProperty('error');
+  });
+
+  test('returns 401 in production for non-main origin without API key', async () => {
+    process.env.NODE_ENV = 'production';
+
+    const response = await app.handle(
+      new Request(`http://localhost/address/${encodeURIComponent(validAddresses.basic)}/index`, {
+        method: 'POST',
+        headers: {
+          origin: 'https://example.com',
+          'x-forwarded-for': '198.51.100.10',
+        },
+      })
+    );
+
+    expect(response.status).toBe(401);
+    const body = await response.json();
+    expect(body.error).toBe('Unauthorized');
+  });
+
+  test('allows production request from localhost origin without API key', async () => {
+    process.env.NODE_ENV = 'production';
+
+    const response = await app.handle(
+      new Request(`http://localhost/address/${encodeURIComponent(validAddresses.basic)}/index`, {
+        method: 'POST',
+        headers: {
+          origin: 'http://localhost:3000',
+          'x-forwarded-for': '198.51.100.11',
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.status).toBe('INDEXING');
   });
 });

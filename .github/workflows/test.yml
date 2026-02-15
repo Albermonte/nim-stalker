@@ -28,11 +28,18 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Generate Prisma client
-        run: bun run db:generate
-
       - name: Run tests
         run: bun run test
 
       - name: Run linting
         run: bun run lint
+
+      - name: Security audit (high/critical)
+        run: |
+          set -euo pipefail
+          OUTPUT="$(bun audit || true)"
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -Eq '(^|[[:space:]])(critical|high):'; then
+            echo "High/Critical vulnerabilities detected"
+            exit 1
+          fi

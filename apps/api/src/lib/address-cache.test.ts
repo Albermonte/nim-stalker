@@ -48,8 +48,8 @@ describe('AddressCache', () => {
       const cache = await getCache();
       cache.set('key1', { value: 'test' });
 
-      // Advance time past TTL (60 seconds)
-      advanceTime(61000);
+      // Advance time past TTL (5 minutes)
+      advanceTime(301000);
 
       expect(cache.get('key1')).toBeNull();
     });
@@ -69,7 +69,7 @@ describe('AddressCache', () => {
       cache.set('key1', { value: 'test' });
       const initialSize = cache.size;
 
-      advanceTime(61000);
+      advanceTime(301000);
       cache.get('key1');
 
       expect(cache.size).toBe(initialSize - 1);
@@ -98,7 +98,7 @@ describe('AddressCache', () => {
       ]);
 
       // Just under TTL - all should exist
-      advanceTime(59000);
+      advanceTime(299000);
       expect(cache.get('a')).not.toBeNull();
       expect(cache.get('b')).not.toBeNull();
 
@@ -125,7 +125,7 @@ describe('AddressCache', () => {
     test('treats expired entries as missing', async () => {
       const cache = await getCache();
       cache.set('a', { val: 1 });
-      advanceTime(61000);
+      advanceTime(301000);
       cache.set('b', { val: 2 });
 
       const result = cache.getMultiple(['a', 'b']);
