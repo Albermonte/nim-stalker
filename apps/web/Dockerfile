@@ -13,6 +13,7 @@ RUN bun install --frozen-lockfile
 # Development stage
 FROM base AS development
 COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
 COPY . .
 WORKDIR /app/apps/web
 EXPOSE 3000
@@ -23,6 +24,7 @@ CMD ["bun", "run", "dev"]
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /app/apps/web
