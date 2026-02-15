@@ -125,6 +125,7 @@ const initialState: GraphState = {
 };
 
 const POLL_INTERVAL_MS = 2000;
+const POLL_TIMEOUT_MS = 120_000;
 
 // Shared WebSocket connection for job status updates
 let jobWs: JobWebSocket | null = null;
@@ -149,17 +150,25 @@ function getJobWebSocket(): JobWebSocket {
  * Wait for a job to complete using WebSocket (real-time) with HTTP polling fallback.
  * Returns the final job status, or null if the job was never found.
  */
-async function pollJobUntilDone(address: string): Promise<IndexingJob | null> {
+export async function _pollJobUntilDone(
+  address: string,
+  options?: { timeoutMs?: number; pollIntervalMs?: number }
+): Promise<IndexingJob | null> {
   const ws = getJobWebSocket();
+  const timeoutMs = options?.timeoutMs ?? POLL_TIMEOUT_MS;
+  const pollIntervalMs = options?.pollIntervalMs ?? POLL_INTERVAL_MS;
+  const startedAt = new Date().toISOString();
 
   return new Promise<IndexingJob | null>((resolve) => {
     let resolved = false;
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
 
     const cleanup = () => {
       resolved = true;
       jobListeners.delete(address);
       if (pollTimer) clearTimeout(pollTimer);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
     };
 
     // WebSocket listener for this address
@@ -188,13 +197,27 @@ async function pollJobUntilDone(address: string): Promise<IndexingJob | null> {
       }
       if (!resolved) {
         // Poll less frequently when WebSocket is connected
-        const interval = ws.connected ? POLL_INTERVAL_MS * 5 : POLL_INTERVAL_MS;
+        const interval = ws.connected ? pollIntervalMs * 5 : pollIntervalMs;
         pollTimer = setTimeout(poll, interval);
       }
     };
 
+    timeoutTimer = setTimeout(() => {
+      if (resolved) return;
+      cleanup();
+      resolve({
+        address,
+        status: 'ERROR',
+        startedAt,
+        completedAt: new Date().toISOString(),
+        indexed: 0,
+        incremental: false,
+        error: `Timed out waiting for indexing job after ${timeoutMs}ms`,
+      });
+    }, timeoutMs);
+
     // Start first poll after a delay (give WebSocket a chance)
-    pollTimer = setTimeout(poll, ws.connected ? POLL_INTERVAL_MS * 5 : POLL_INTERVAL_MS);
+    pollTimer = setTimeout(poll, ws.connected ? pollIntervalMs * 5 : pollIntervalMs);
   });
 }
 
@@ -341,7 +364,7 @@ export const useGraphStore = create<GraphState & GraphActions>()(
         await api.indexAddress(id);
 
         // Poll until done
-        const job = await pollJobUntilDone(id);
+        const job = await _pollJobUntilDone(id);
 
         if (job?.status === 'ERROR') {
           throw new Error(job.error || 'Indexing failed');
@@ -432,7 +455,7 @@ export const useGraphStore = create<GraphState & GraphActions>()(
         await api.indexAddress(address);
 
         // Poll until indexing completes
-        const job = await pollJobUntilDone(formattedAddress);
+        const job = await _pollJobUntilDone(formattedAddress);
 
         if (job?.status === 'ERROR') {
           throw new Error(job.error || 'Indexing failed');

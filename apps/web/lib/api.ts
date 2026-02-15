@@ -34,6 +34,8 @@ const ENDPOINT_TTL: Record<string, number> = {
   '/jobs': 2_000,         // Jobs: 2s
   '/address/': 30_000,    // Address data: 30s (default)
 };
+const MAX_CACHE_ENTRIES = 2_000;
+const CACHE_SWEEP_EVERY_WRITES = 50;
 
 function getTtlForEndpoint(endpoint: string): number {
   for (const [prefix, ttl] of Object.entries(ENDPOINT_TTL)) {
@@ -42,9 +44,19 @@ function getTtlForEndpoint(endpoint: string): number {
   return 30_000; // Default 30s
 }
 
-class ApiClient {
+function getTtlForCacheKey(cacheKey: string): number {
+  if (cacheKey.startsWith('address:')) return ENDPOINT_TTL['/address/'];
+  if (cacheKey.startsWith('GET:') || cacheKey.startsWith('POST:')) {
+    const endpoint = cacheKey.slice(4);
+    return getTtlForEndpoint(endpoint);
+  }
+  return getTtlForEndpoint(cacheKey);
+}
+
+export class ApiClient {
   private baseUrl: string;
   private cache = new Map<string, CacheEntry<unknown>>();
+  private cacheWrites = 0;
   /** In-flight request deduplication: concurrent requests for the same key share a single Promise */
   private inFlight = new Map<string, Promise<unknown>>();
 
@@ -55,16 +67,50 @@ class ApiClient {
   private getCached<T>(key: string, ttlMs?: number): T | null {
     const entry = this.cache.get(key);
     if (!entry) return null;
-    const ttl = ttlMs ?? getTtlForEndpoint(key);
+    const ttl = ttlMs ?? getTtlForCacheKey(key);
     if (Date.now() - entry.timestamp > ttl) {
       this.cache.delete(key);
       return null;
     }
+    // LRU refresh on hit
+    this.cache.delete(key);
+    this.cache.set(key, entry);
     return entry.data as T;
   }
 
   private setCache<T>(key: string, data: T): void {
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    }
     this.cache.set(key, { data, timestamp: Date.now() });
+    this.cacheWrites += 1;
+
+    // Opportunistic sweep to keep stale entries from accumulating.
+    if (this.cacheWrites % CACHE_SWEEP_EVERY_WRITES === 0) {
+      this.pruneExpiredEntries();
+    }
+    this.evictIfNeeded();
+  }
+
+  private pruneExpiredEntries(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.cache.entries()) {
+      const ttl = getTtlForCacheKey(key);
+      if (now - entry.timestamp > ttl) {
+        this.cache.delete(key);
+      }
+    }
+  }
+
+  private evictIfNeeded(): void {
+    if (this.cache.size <= MAX_CACHE_ENTRIES) return;
+    const toEvict = this.cache.size - MAX_CACHE_ENTRIES;
+    let evicted = 0;
+    for (const key of this.cache.keys()) {
+      this.cache.delete(key);
+      evicted += 1;
+      if (evicted >= toEvict) break;
+    }
   }
 
   invalidateCache(pattern: string): void {

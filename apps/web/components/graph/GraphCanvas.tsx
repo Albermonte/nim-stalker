@@ -2,11 +2,12 @@
 
 import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
 import CytoscapeComponent from 'react-cytoscapejs';
-import cytoscape, { Core, EventObject } from 'cytoscape';
+import cytoscape, { Core } from 'cytoscape';
 import fcose from 'cytoscape-fcose';
 import { IndexStatus, type CytoscapeNode, type CytoscapeEdge, type NodeData } from '@nim-stalker/shared';
 import { useGraphStore } from '@/store/graph-store';
 import { NodeContextMenu } from './NodeContextMenu';
+import { bindCyEvents } from './graph-events';
 import { getLayoutOptions, getPathLayoutOptions, getIncrementalLayoutOptions, getIncrementalOptionsForMode } from '@/lib/layout-configs';
 import { ensureLayoutRegistered } from '@/lib/layout-loader';
 import { computeDirectedFlowPositions, computeIncrementalDirectedFlow } from '@/lib/layout-directed-flow';
@@ -247,6 +248,7 @@ function getExclusiveNeighbors(cy: Core, nodeId: string) {
 
 export function GraphCanvas() {
   const cyRef = useRef<Core | null>(null);
+  const [cyInstance, setCyInstance] = useState<Core | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const prevNodeCountRef = useRef<number>(0);
   const prevLayoutModeRef = useRef<string | null>(null);
@@ -285,11 +287,7 @@ export function GraphCanvas() {
   // Subscribe to Maps - new Map references trigger re-renders since we create new Maps on updates
   const nodesMap = useGraphStore((state) => state.nodes);
   const edgesMap = useGraphStore((state) => state.edges);
-  const selectNode = useGraphStore((state) => state.selectNode);
-  const selectEdge = useGraphStore((state) => state.selectEdge);
   const selectedNodeId = useGraphStore((state) => state.selectedNodeId);
-  const indexNode = useGraphStore((state) => state.indexNode);
-  const expandNode = useGraphStore((state) => state.expandNode);
   const pathMode = useGraphStore((state) => state.pathMode);
   const pathView = useGraphStore((state) => state.pathView);
   const findPath = useGraphStore((state) => state.findPath);
@@ -319,154 +317,136 @@ export function GraphCanvas() {
 
   const handleCyInit = useCallback((cy: Core) => {
     cyRef.current = cy;
+    setCyInstance((prev) => (prev === cy ? prev : cy));
+  }, []);
 
-    cy.on('tap', 'node', (evt: EventObject) => {
-      const nodeId = evt.target.id();
-      selectNode(nodeId);
-    });
+  // Register Cytoscape interaction handlers once per cy instance.
+  useEffect(() => {
+    const cy = cyInstance;
+    if (!cy) return;
 
-    cy.on('tap', 'edge', (evt: EventObject) => {
-      const edgeId = evt.target.id();
-      selectEdge(edgeId);
-    });
+    return bindCyEvents(cy, {
+      onTapNode: (evt) => {
+        useGraphStore.getState().selectNode(evt.target.id());
+      },
+      onTapEdge: (evt) => {
+        useGraphStore.getState().selectEdge(evt.target.id());
+      },
+      onTapBackground: (evt) => {
+        if (evt.target === cy) {
+          const state = useGraphStore.getState();
+          state.selectNode(null);
+          state.selectEdge(null);
+        }
+      },
+      onDblTapNode: async (evt) => {
+        const nodeId = evt.target.id();
+        const state = useGraphStore.getState();
+        const node = state.nodes.get(nodeId);
+        if (node && node.data.indexStatus === IndexStatus.PENDING) {
+          await state.indexNode(nodeId);
+        }
+        await state.expandNode(nodeId, 'both');
+      },
+      onMouseOverNode: (evt) => {
+        const container = cy.container();
+        if (container) container.style.cursor = 'pointer';
 
-    cy.on('tap', (evt: EventObject) => {
-      if (evt.target === cy) {
-        selectNode(null);
-        selectEdge(null);
-      }
-    });
+        const node = evt.target;
+        const nodeId = node.id();
 
-    // Double-click to expand node (index first if needed)
-    cy.on('dbltap', 'node', async (evt: EventObject) => {
-      const nodeId = evt.target.id();
-      const node = nodesMap.get(nodeId);
-      if (node && node.data.indexStatus === IndexStatus.PENDING) {
-        // Index first, then expand
-        await indexNode(nodeId);
-      }
-      expandNode(nodeId, 'both');
-    });
+        if (hoverTimeoutRef.current) {
+          clearTimeout(hoverTimeoutRef.current);
+        }
+        if (edgeHoverTimeoutRef.current) {
+          clearTimeout(edgeHoverTimeoutRef.current);
+          edgeHoverTimeoutRef.current = null;
+        }
+        setEdgeTooltip((prev) => ({ ...prev, visible: false }));
 
-    // Node hover with tooltip
-    cy.on('mouseover', 'node', (evt: EventObject) => {
-      const container = cy.container();
-      if (container) container.style.cursor = 'pointer';
-
-      const node = evt.target;
-      const nodeId = node.id();
-
-      // Clear any existing timeouts
-      if (hoverTimeoutRef.current) {
-        clearTimeout(hoverTimeoutRef.current);
-      }
-      // Clear edge tooltip to avoid both showing at once
-      if (edgeHoverTimeoutRef.current) {
-        clearTimeout(edgeHoverTimeoutRef.current);
-        edgeHoverTimeoutRef.current = null;
-      }
-      setEdgeTooltip((prev) => ({ ...prev, visible: false }));
-
-      // Start 300ms timer for tooltip
-      hoverTimeoutRef.current = setTimeout(() => {
-        const pos = node.renderedPosition();
-
-        setTooltip({
-          visible: true,
-          x: pos.x,
-          y: pos.y,
-          nodeId,
-        });
-      }, 300);
-
-    });
-
-    cy.on('mouseout', 'node', () => {
-      const container = cy.container();
-      if (container) container.style.cursor = 'default';
-
-      // Cancel tooltip timer and hide tooltip
-      if (hoverTimeoutRef.current) {
-        clearTimeout(hoverTimeoutRef.current);
-        hoverTimeoutRef.current = null;
-      }
-      setTooltip((prev) => ({ ...prev, visible: false }));
-    });
-
-    // Edge hover with tooltip (250ms delay)
-    cy.on('mouseover', 'edge', (evt: EventObject) => {
-      const container = cy.container();
-      if (container) container.style.cursor = 'pointer';
-
-      const edge = evt.target;
-      const edgeId = edge.id();
-
-      // Clear any existing edge hover timeout
-      if (edgeHoverTimeoutRef.current) {
-        clearTimeout(edgeHoverTimeoutRef.current);
-      }
-      // Clear node tooltip to avoid both showing at once
-      setTooltip((prev) => ({ ...prev, visible: false }));
-
-      edgeHoverTimeoutRef.current = setTimeout(() => {
-        const midpoint = edge.renderedMidpoint();
-        setEdgeTooltip({
-          visible: true,
-          x: midpoint.x,
-          y: midpoint.y,
-          edgeId,
-        });
-      }, 250);
-    });
-
-    cy.on('mouseout', 'edge', () => {
-      const container = cy.container();
-      if (container) container.style.cursor = 'default';
-
-      if (edgeHoverTimeoutRef.current) {
-        clearTimeout(edgeHoverTimeoutRef.current);
-        edgeHoverTimeoutRef.current = null;
-      }
-      setEdgeTooltip((prev) => ({ ...prev, visible: false }));
-    });
-
-    // Compound drag: when grabbing a node, identify exclusive neighbors
-    cy.on('grab', 'node', (evt: EventObject) => {
-      const node = evt.target;
-      const pos = node.position();
-      dragStartPosRef.current = { x: pos.x, y: pos.y };
-      exclusiveNeighborsRef.current = getExclusiveNeighbors(cy, node.id());
-    });
-
-    // While dragging, move exclusive neighbors along
-    cy.on('drag', 'node', (evt: EventObject) => {
-      const node = evt.target;
-      const currentPos = node.position();
-
-      if (dragStartPosRef.current && exclusiveNeighborsRef.current) {
-        const deltaX = currentPos.x - dragStartPosRef.current.x;
-        const deltaY = currentPos.y - dragStartPosRef.current.y;
-
-        // Move each exclusive neighbor by the same delta
-        exclusiveNeighborsRef.current.forEach((neighbor) => {
-          const neighborPos = neighbor.position();
-          neighbor.position({
-            x: neighborPos.x + deltaX,
-            y: neighborPos.y + deltaY,
+        hoverTimeoutRef.current = setTimeout(() => {
+          const pos = node.renderedPosition();
+          setTooltip({
+            visible: true,
+            x: pos.x,
+            y: pos.y,
+            nodeId,
           });
-        });
+        }, 300);
+      },
+      onMouseOutNode: () => {
+        const container = cy.container();
+        if (container) container.style.cursor = 'default';
 
-        // Update start position for next drag event
-        dragStartPosRef.current = { x: currentPos.x, y: currentPos.y };
-      }
-    });
+        if (hoverTimeoutRef.current) {
+          clearTimeout(hoverTimeoutRef.current);
+          hoverTimeoutRef.current = null;
+        }
+        setTooltip((prev) => ({ ...prev, visible: false }));
+      },
+      onMouseOverEdge: (evt) => {
+        const container = cy.container();
+        if (container) container.style.cursor = 'pointer';
 
-    // Clean up on release
-    cy.on('free', 'node', () => {
-      dragStartPosRef.current = null;
-      exclusiveNeighborsRef.current = null;
+        const edge = evt.target;
+        const edgeId = edge.id();
+
+        if (edgeHoverTimeoutRef.current) {
+          clearTimeout(edgeHoverTimeoutRef.current);
+        }
+        setTooltip((prev) => ({ ...prev, visible: false }));
+
+        edgeHoverTimeoutRef.current = setTimeout(() => {
+          const midpoint = edge.renderedMidpoint();
+          setEdgeTooltip({
+            visible: true,
+            x: midpoint.x,
+            y: midpoint.y,
+            edgeId,
+          });
+        }, 250);
+      },
+      onMouseOutEdge: () => {
+        const container = cy.container();
+        if (container) container.style.cursor = 'default';
+
+        if (edgeHoverTimeoutRef.current) {
+          clearTimeout(edgeHoverTimeoutRef.current);
+          edgeHoverTimeoutRef.current = null;
+        }
+        setEdgeTooltip((prev) => ({ ...prev, visible: false }));
+      },
+      onGrabNode: (evt) => {
+        const node = evt.target;
+        const pos = node.position();
+        dragStartPosRef.current = { x: pos.x, y: pos.y };
+        exclusiveNeighborsRef.current = getExclusiveNeighbors(cy, node.id());
+      },
+      onDragNode: (evt) => {
+        const node = evt.target;
+        const currentPos = node.position();
+
+        if (dragStartPosRef.current && exclusiveNeighborsRef.current) {
+          const deltaX = currentPos.x - dragStartPosRef.current.x;
+          const deltaY = currentPos.y - dragStartPosRef.current.y;
+
+          exclusiveNeighborsRef.current.forEach((neighbor) => {
+            const neighborPos = neighbor.position();
+            neighbor.position({
+              x: neighborPos.x + deltaX,
+              y: neighborPos.y + deltaY,
+            });
+          });
+
+          dragStartPosRef.current = { x: currentPos.x, y: currentPos.y };
+        }
+      },
+      onFreeNode: () => {
+        dragStartPosRef.current = null;
+        exclusiveNeighborsRef.current = null;
+      },
     });
-  }, [selectNode, selectEdge, indexNode, expandNode, nodesMap]);
+  }, [cyInstance]);
 
   // Load initial data on mount
   useEffect(() => {
@@ -491,7 +471,7 @@ export function GraphCanvas() {
 
   // Viewport-aware identicon generation: only convert PNGs for visible nodes
   useEffect(() => {
-    const cy = cyRef.current;
+    const cy = cyInstance;
     if (!cy) return;
 
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -513,7 +493,7 @@ export function GraphCanvas() {
       cy.off('viewport', handleViewport);
       if (debounceTimer) clearTimeout(debounceTimer);
     };
-  }, []);
+  }, [cyInstance]);
 
   // Cleanup timeouts on unmount
   useEffect(() => {
@@ -531,7 +511,6 @@ export function GraphCanvas() {
         runningLayoutRef.current.stop();
         runningLayoutRef.current = null;
       }
-      identiconManager.dispose();
     };
   }, []);
 

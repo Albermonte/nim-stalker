@@ -80,7 +80,9 @@ class IdenticonManager {
 
       this.worker.onerror = () => {
         // OffscreenCanvas not supported or worker failed — use fallback
+        this.pending.clear();
         this.workerSupported = false;
+        this.worker?.terminate();
         this.worker = null;
       };
 
@@ -212,6 +214,7 @@ class IdenticonManager {
   dispose(): void {
     this.worker?.terminate();
     this.worker = null;
+    this.pending.clear();
     this.onNodeUpdate = null;
   }
 }
