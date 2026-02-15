@@ -13,6 +13,7 @@ RUN bun install --frozen-lockfile
 # Development stage
 FROM base AS development
 COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
 COPY . .
 WORKDIR /app/apps/api
 EXPOSE 3001
@@ -21,6 +22,7 @@ CMD ["bun", "run", "dev"]
 # Build stage
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
 COPY . .
 WORKDIR /app/apps/api
 RUN bun run build

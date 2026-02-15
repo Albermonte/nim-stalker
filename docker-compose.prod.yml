@@ -74,7 +74,7 @@ services:
       db:
         condition: service_healthy
       node:
-        condition: service_healthy
+        condition: service_started
     restart: unless-stopped
 
   web:
