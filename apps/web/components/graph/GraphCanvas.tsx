@@ -1,0 +1,1025 @@
+'use client';
+
+import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
+import CytoscapeComponent from 'react-cytoscapejs';
+import cytoscape, { Core, EventObject } from 'cytoscape';
+import fcose from 'cytoscape-fcose';
+import { IndexStatus, type CytoscapeNode, type CytoscapeEdge, type NodeData } from '@nim-stalker/shared';
+import { useGraphStore } from '@/store/graph-store';
+import { NodeContextMenu } from './NodeContextMenu';
+import { getLayoutOptions, getPathLayoutOptions, getIncrementalLayoutOptions, getIncrementalOptionsForMode } from '@/lib/layout-configs';
+import { ensureLayoutRegistered } from '@/lib/layout-loader';
+import { computeDirectedFlowPositions, computeIncrementalDirectedFlow } from '@/lib/layout-directed-flow';
+import { identiconManager } from '@/lib/identicon-manager';
+import { computeGraphHash, saveLayoutPositions, getLayoutPositions } from '@/lib/layout-cache';
+
+// Register default layout statically (always needed)
+cytoscape.use(fcose);
+
+// NQ stylesheet - colorful, rounded, playful
+// Using 'any' for style objects because TypeScript types don't include all valid Cytoscape.js properties
+const stylesheet: cytoscape.StylesheetStyle[] = [
+  {
+    selector: 'node',
+    style: {
+      'background-opacity': 0,
+      'background-image': 'data(identicon)',
+      'background-fit': 'contain',
+      'background-clip': 'none',
+      'background-width': '100%',
+      'background-height': '100%',
+      'background-position-x': '50%',
+      'background-position-y': '50%',
+      'background-image-smoothing': 'yes',
+      label: 'data(label)',
+      color: '#000000',
+      'text-outline-color': '#FFFFFF',
+      'text-outline-width': 2,
+      'font-size': '11px',
+      'font-weight': 'bold',
+      'text-valign': 'bottom',
+      'text-halign': 'center',
+      'text-margin-y': 8,
+      width: 64,
+      height: 64,
+      shape: 'ellipse',
+    } as any,
+  },
+  {
+    selector: 'node:selected',
+    style: {
+      'overlay-padding': 8,
+      'overlay-color': '#FF69B4',
+      'overlay-opacity': 0.2,
+      'overlay-shape': 'ellipse',
+    },
+  },
+  {
+    selector: 'node.path-start',
+    style: {
+      'overlay-padding': 8,
+      'overlay-color': '#8B8BF5',
+      'overlay-opacity': 0.3,
+      'overlay-shape': 'ellipse',
+    },
+  },
+  {
+    selector: 'node.path-end',
+    style: {
+      'overlay-padding': 8,
+      'overlay-color': '#FF69B4',
+      'overlay-opacity': 0.3,
+      'overlay-shape': 'ellipse',
+    },
+  },
+  {
+    selector: 'node.path-intermediate',
+    style: {
+      'overlay-padding': 8,
+      'overlay-color': '#FACC15',
+      'overlay-opacity': 0.3,
+      'overlay-shape': 'ellipse',
+    },
+  },
+  {
+    selector: 'edge',
+    style: {
+      // Dynamic width based on transaction count: 1 tx → 3px, 300+ tx → 15px
+      width: 'mapData(txCount, 1, 300, 3, 15)' as any,
+      'line-color': 'rgba(107, 114, 128, 0.3)',
+      'target-arrow-color': 'rgba(107, 114, 128, 0.3)',
+      'target-arrow-shape': 'triangle',
+      'curve-style': 'bezier',
+      'arrow-scale': 1.2,
+    },
+  },
+  {
+    selector: 'edge:selected',
+    style: {
+      'line-color': '#FF69B4', // NQ pink
+      'target-arrow-color': '#FF69B4',
+      'line-style': 'solid',
+      // Inherits dynamic width from base edge selector
+    },
+  },
+  {
+    selector: 'edge.outgoing-from-selected',
+    style: {
+      'line-color': '#FF69B4', // NQ pink for outgoing
+      'target-arrow-color': '#FF69B4',
+      // Inherits dynamic width from base edge selector
+    },
+  },
+  {
+    selector: 'edge.incoming-to-selected',
+    style: {
+      'line-color': '#22C55E', // Green for incoming
+      'target-arrow-color': '#22C55E',
+      // Inherits dynamic width from base edge selector
+    },
+  },
+  {
+    selector: 'edge.dimmed',
+    style: {
+      opacity: 0.2,
+    },
+  },
+  {
+    selector: 'edge.path-edge',
+    style: {
+      'line-color': '#8B8BF5', // Periwinkle for path
+      'target-arrow-color': '#8B8BF5',
+      // Inherits dynamic width from base edge selector
+    },
+  },
+];
+
+
+// Tooltip component for node hover
+interface NodeTooltipProps {
+  visible: boolean;
+  nodeId: string | null;
+  x: number;
+  y: number;
+  nodesMap: Map<string, CytoscapeNode>;
+}
+
+function NodeTooltip({ visible, nodeId, x, y, nodesMap }: NodeTooltipProps) {
+  if (!visible || !nodeId) return null;
+
+  const nodeData = nodesMap.get(nodeId)?.data;
+  if (!nodeData) return null;
+
+  return (
+    <div
+      className="absolute nq-card py-2 px-3 text-xs z-50 pointer-events-none whitespace-nowrap"
+      style={{
+        left: x,
+        top: y - 50,
+        transform: 'translateX(-50%)',
+      }}
+    >
+      {renderTooltipContent(nodeData)}
+    </div>
+  );
+}
+
+function renderTooltipContent(nodeData: NodeData): JSX.Element {
+  switch (nodeData.indexStatus) {
+    case 'PENDING':
+      return (
+        <span className="font-bold uppercase tracking-wide text-nq-periwinkle">
+          Not indexed
+        </span>
+      );
+    case 'INDEXING':
+      return (
+        <span className="font-bold uppercase tracking-wide flex items-center gap-2 text-nq-yellow">
+          <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+          </svg>
+          Indexing...
+        </span>
+      );
+    case 'COMPLETE':
+      return (
+        <span className="font-bold uppercase tracking-wide text-green-600">
+          {nodeData.txCount !== undefined ? `${nodeData.txCount.toLocaleString()} TX` : 'Indexed'}
+        </span>
+      );
+    case 'ERROR':
+      return (
+        <span className="font-bold uppercase tracking-wide text-nq-pink">
+          Indexing Failed
+        </span>
+      );
+    default:
+      return <span />;
+  }
+}
+
+// Tooltip component for edge hover
+interface EdgeTooltipProps {
+  visible: boolean;
+  edgeId: string | null;
+  x: number;
+  y: number;
+  edgesMap: Map<string, CytoscapeEdge>;
+}
+
+function EdgeTooltip({ visible, edgeId, x, y, edgesMap }: EdgeTooltipProps) {
+  if (!visible || !edgeId) return null;
+
+  const edgeData = edgesMap.get(edgeId)?.data;
+  if (!edgeData) return null;
+
+  const txCount = edgeData.txCount ?? 0;
+
+  return (
+    <div
+      className="absolute nq-card py-2 px-3 text-xs z-50 pointer-events-none whitespace-nowrap"
+      style={{
+        left: x,
+        top: y - 30,
+        transform: 'translateX(-50%)',
+      }}
+    >
+      <span className="font-bold uppercase tracking-wide">
+        {txCount.toLocaleString()} TX
+      </span>
+    </div>
+  );
+}
+
+// Helper to find nodes that are ONLY connected to the dragged node
+function getExclusiveNeighbors(cy: Core, nodeId: string) {
+  const node = cy.getElementById(nodeId);
+  const neighbors = node.neighborhood('node');
+
+  // Filter neighbors that have no other connections besides the dragged node
+  return neighbors.filter((neighbor) => {
+    const neighborConnections = neighbor.neighborhood('node');
+    // If neighbor only connects to the dragged node, it's exclusive
+    return neighborConnections.length === 1 && neighborConnections[0].id() === nodeId;
+  });
+}
+
+export function GraphCanvas() {
+  const cyRef = useRef<Core | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const prevNodeCountRef = useRef<number>(0);
+  const prevLayoutModeRef = useRef<string | null>(null);
+  const prevPathViewActiveRef = useRef<boolean>(false);
+
+  // Layout cancellation: stop previous layout before starting a new one
+  const runningLayoutRef = useRef<cytoscape.Layouts | null>(null);
+  // Layout debounce: batch rapid expansions into a single layout run
+  const layoutDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Generation counter: incremented each time a layout is requested, so async
+  // callbacks (ensureLayoutRegistered) can detect if they've been superseded
+  const layoutGenerationRef = useRef<number>(0);
+
+  // Refs for compound drag behavior
+  const dragStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const exclusiveNeighborsRef = useRef<cytoscape.NodeCollection | null>(null);
+
+  // Tooltip state and refs
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [tooltip, setTooltip] = useState<{
+    visible: boolean;
+    x: number;
+    y: number;
+    nodeId: string | null;
+  }>({ visible: false, x: 0, y: 0, nodeId: null });
+
+  // Edge tooltip state and refs
+  const edgeHoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [edgeTooltip, setEdgeTooltip] = useState<{
+    visible: boolean;
+    x: number;
+    y: number;
+    edgeId: string | null;
+  }>({ visible: false, x: 0, y: 0, edgeId: null });
+
+  // Subscribe to Maps - new Map references trigger re-renders since we create new Maps on updates
+  const nodesMap = useGraphStore((state) => state.nodes);
+  const edgesMap = useGraphStore((state) => state.edges);
+  const selectNode = useGraphStore((state) => state.selectNode);
+  const selectEdge = useGraphStore((state) => state.selectEdge);
+  const selectedNodeId = useGraphStore((state) => state.selectedNodeId);
+  const indexNode = useGraphStore((state) => state.indexNode);
+  const expandNode = useGraphStore((state) => state.expandNode);
+  const pathMode = useGraphStore((state) => state.pathMode);
+  const pathView = useGraphStore((state) => state.pathView);
+  const findPath = useGraphStore((state) => state.findPath);
+  const clearLastExpanded = useGraphStore((state) => state.clearLastExpanded);
+  const loadInitialData = useGraphStore((state) => state.loadInitialData);
+  const layoutMode = useGraphStore((state) => state.layoutMode);
+  const indexingAddresses = useGraphStore((state) => state.indexingAddresses);
+
+  // Memoize array conversion to avoid creating new arrays every render
+  const nodes = useMemo(() => Array.from(nodesMap.values()), [nodesMap]);
+  const edges = useMemo(() => Array.from(edgesMap.values()), [edgesMap]);
+
+  // Create Cytoscape elements format with identicons
+  // Must spread data objects to avoid "Cannot assign to read only property" errors
+  // since Zustand/Immer freezes state objects and Cytoscape mutates them internally
+  const cytoscapeElements = useMemo(() => [
+    ...nodes.map((n) => ({
+      data: {
+        ...n.data,
+        type: n.data.type,
+        // Pass cy ref so PNG conversion can update nodes when complete
+        identicon: n.data.icon || identiconManager.getIdenticonDataUri(n.data.id),
+      }
+    })),
+    ...edges.map((e) => ({ data: { ...e.data } })),
+  ], [nodes, edges]);
+
+  const handleCyInit = useCallback((cy: Core) => {
+    cyRef.current = cy;
+
+    cy.on('tap', 'node', (evt: EventObject) => {
+      const nodeId = evt.target.id();
+      selectNode(nodeId);
+    });
+
+    cy.on('tap', 'edge', (evt: EventObject) => {
+      const edgeId = evt.target.id();
+      selectEdge(edgeId);
+    });
+
+    cy.on('tap', (evt: EventObject) => {
+      if (evt.target === cy) {
+        selectNode(null);
+        selectEdge(null);
+      }
+    });
+
+    // Double-click to expand node (index first if needed)
+    cy.on('dbltap', 'node', async (evt: EventObject) => {
+      const nodeId = evt.target.id();
+      const node = nodesMap.get(nodeId);
+      if (node && node.data.indexStatus === IndexStatus.PENDING) {
+        // Index first, then expand
+        await indexNode(nodeId);
+      }
+      expandNode(nodeId, 'both');
+    });
+
+    // Node hover with tooltip
+    cy.on('mouseover', 'node', (evt: EventObject) => {
+      const container = cy.container();
+      if (container) container.style.cursor = 'pointer';
+
+      const node = evt.target;
+      const nodeId = node.id();
+
+      // Clear any existing timeouts
+      if (hoverTimeoutRef.current) {
+        clearTimeout(hoverTimeoutRef.current);
+      }
+      // Clear edge tooltip to avoid both showing at once
+      if (edgeHoverTimeoutRef.current) {
+        clearTimeout(edgeHoverTimeoutRef.current);
+        edgeHoverTimeoutRef.current = null;
+      }
+      setEdgeTooltip((prev) => ({ ...prev, visible: false }));
+
+      // Start 300ms timer for tooltip
+      hoverTimeoutRef.current = setTimeout(() => {
+        const pos = node.renderedPosition();
+
+        setTooltip({
+          visible: true,
+          x: pos.x,
+          y: pos.y,
+          nodeId,
+        });
+      }, 300);
+
+    });
+
+    cy.on('mouseout', 'node', () => {
+      const container = cy.container();
+      if (container) container.style.cursor = 'default';
+
+      // Cancel tooltip timer and hide tooltip
+      if (hoverTimeoutRef.current) {
+        clearTimeout(hoverTimeoutRef.current);
+        hoverTimeoutRef.current = null;
+      }
+      setTooltip((prev) => ({ ...prev, visible: false }));
+    });
+
+    // Edge hover with tooltip (250ms delay)
+    cy.on('mouseover', 'edge', (evt: EventObject) => {
+      const container = cy.container();
+      if (container) container.style.cursor = 'pointer';
+
+      const edge = evt.target;
+      const edgeId = edge.id();
+
+      // Clear any existing edge hover timeout
+      if (edgeHoverTimeoutRef.current) {
+        clearTimeout(edgeHoverTimeoutRef.current);
+      }
+      // Clear node tooltip to avoid both showing at once
+      setTooltip((prev) => ({ ...prev, visible: false }));
+
+      edgeHoverTimeoutRef.current = setTimeout(() => {
+        const midpoint = edge.renderedMidpoint();
+        setEdgeTooltip({
+          visible: true,
+          x: midpoint.x,
+          y: midpoint.y,
+          edgeId,
+        });
+      }, 250);
+    });
+
+    cy.on('mouseout', 'edge', () => {
+      const container = cy.container();
+      if (container) container.style.cursor = 'default';
+
+      if (edgeHoverTimeoutRef.current) {
+        clearTimeout(edgeHoverTimeoutRef.current);
+        edgeHoverTimeoutRef.current = null;
+      }
+      setEdgeTooltip((prev) => ({ ...prev, visible: false }));
+    });
+
+    // Compound drag: when grabbing a node, identify exclusive neighbors
+    cy.on('grab', 'node', (evt: EventObject) => {
+      const node = evt.target;
+      const pos = node.position();
+      dragStartPosRef.current = { x: pos.x, y: pos.y };
+      exclusiveNeighborsRef.current = getExclusiveNeighbors(cy, node.id());
+    });
+
+    // While dragging, move exclusive neighbors along
+    cy.on('drag', 'node', (evt: EventObject) => {
+      const node = evt.target;
+      const currentPos = node.position();
+
+      if (dragStartPosRef.current && exclusiveNeighborsRef.current) {
+        const deltaX = currentPos.x - dragStartPosRef.current.x;
+        const deltaY = currentPos.y - dragStartPosRef.current.y;
+
+        // Move each exclusive neighbor by the same delta
+        exclusiveNeighborsRef.current.forEach((neighbor) => {
+          const neighborPos = neighbor.position();
+          neighbor.position({
+            x: neighborPos.x + deltaX,
+            y: neighborPos.y + deltaY,
+          });
+        });
+
+        // Update start position for next drag event
+        dragStartPosRef.current = { x: currentPos.x, y: currentPos.y };
+      }
+    });
+
+    // Clean up on release
+    cy.on('free', 'node', () => {
+      dragStartPosRef.current = null;
+      exclusiveNeighborsRef.current = null;
+    });
+  }, [selectNode, selectEdge, indexNode, expandNode, nodesMap]);
+
+  // Load initial data on mount
+  useEffect(() => {
+    loadInitialData();
+  }, [loadInitialData]);
+
+  // Wire up identicon manager: update Cytoscape nodes when PNG conversions complete
+  useEffect(() => {
+    identiconManager.setNodeUpdateCallback((address, pngDataUri) => {
+      const cy = cyRef.current;
+      if (!cy) return;
+      const node = cy.getElementById(address);
+      if (node.length > 0) {
+        node.data('identicon', pngDataUri);
+      }
+    });
+
+    return () => {
+      identiconManager.setNodeUpdateCallback(null);
+    };
+  }, []);
+
+  // Viewport-aware identicon generation: only convert PNGs for visible nodes
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const handleViewport = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        const ext = cy.extent();
+        const visibleIds = cy.nodes().filter((n) => {
+          const bb = n.boundingBox();
+          return bb.x1 <= ext.x2 && bb.x2 >= ext.x1 && bb.y1 <= ext.y2 && bb.y2 >= ext.y1;
+        }).map((n) => n.id());
+        identiconManager.generateForViewport(visibleIds);
+      }, 200);
+    };
+
+    cy.on('viewport', handleViewport);
+    return () => {
+      cy.off('viewport', handleViewport);
+      if (debounceTimer) clearTimeout(debounceTimer);
+    };
+  }, []);
+
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) {
+        clearTimeout(hoverTimeoutRef.current);
+      }
+      if (edgeHoverTimeoutRef.current) {
+        clearTimeout(edgeHoverTimeoutRef.current);
+      }
+      if (layoutDebounceRef.current) {
+        clearTimeout(layoutDebounceRef.current);
+      }
+      if (runningLayoutRef.current) {
+        runningLayoutRef.current.stop();
+        runningLayoutRef.current = null;
+      }
+      identiconManager.dispose();
+    };
+  }, []);
+
+  // Sync elements with Cytoscape instance when they change
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+
+    // Get current element IDs in Cytoscape (also used for fixedNodeConstraint)
+    const existingNodeIds = new Set(cy.nodes().map((n) => n.id()));
+    const existingEdgeIds = new Set(cy.edges().map((e) => e.id()));
+
+    // Get new element IDs from state
+    const newNodeIds = new Set(nodes.map((n) => n.data.id));
+    const newEdgeIds = new Set(edges.map((e) => e.data.id));
+
+    // Find elements to add
+    const nodesToAdd = nodes.filter((n) => !existingNodeIds.has(n.data.id));
+    const edgesToAdd = edges.filter((e) => !existingEdgeIds.has(e.data.id));
+
+    // Find elements to remove
+    const nodeIdsToRemove = Array.from(existingNodeIds).filter((id) => !newNodeIds.has(id));
+    const edgeIdsToRemove = Array.from(existingEdgeIds).filter((id) => !newEdgeIds.has(id));
+
+    // Apply changes
+    if (nodeIdsToRemove.length > 0 || edgeIdsToRemove.length > 0) {
+      cy.remove(cy.getElementById(nodeIdsToRemove.join(',')));
+      cy.remove(cy.getElementById(edgeIdsToRemove.join(',')));
+    }
+
+    // Read lastExpandedNodeId from store state (not a dependency) to avoid
+    // double-firing the effect when expandNode sets it separately from addGraphData
+    const lastExpandedNodeId = useGraphStore.getState().lastExpandedNodeId;
+
+    // Position new nodes around the expanded node before adding them
+    // Calculate offset direction: away from the center of mass of existing nodes
+    let offsetX = 0;
+    let offsetY = 0;
+
+    if (lastExpandedNodeId && existingNodeIds.size > 1) {
+      // Calculate center of mass of existing nodes (excluding the expanded node)
+      let sumX = 0;
+      let sumY = 0;
+      let count = 0;
+      cy.nodes().forEach((node) => {
+        if (node.id() !== lastExpandedNodeId) {
+          const pos = node.position();
+          sumX += pos.x;
+          sumY += pos.y;
+          count++;
+        }
+      });
+
+      if (count > 0) {
+        const centerX = sumX / count;
+        const centerY = sumY / count;
+
+        // Get expanded node position
+        const expandedNode = cy.getElementById(lastExpandedNodeId);
+        if (expandedNode.length > 0) {
+          const expandedPos = expandedNode.position();
+
+          // Vector from center of mass to expanded node
+          const vecX = expandedPos.x - centerX;
+          const vecY = expandedPos.y - centerY;
+          const magnitude = Math.sqrt(vecX * vecX + vecY * vecY);
+
+          if (magnitude > 0) {
+            // Normalize and scale to push new nodes away from existing cluster
+            offsetX = (vecX / magnitude) * 400;
+            offsetY = (vecY / magnitude) * 400;
+          }
+        }
+      }
+    }
+
+    const nodesToAddWithPosition = nodesToAdd.map((n, index) => {
+      const nodeData = {
+        group: 'nodes' as const,
+        data: {
+          ...n.data,
+          // Pass cy ref so PNG conversion can update nodes when complete
+          identicon: n.data.icon || identiconManager.getIdenticonDataUri(n.data.id),
+        },
+        position: undefined as { x: number; y: number } | undefined,
+      };
+
+      // If we have an expanded node source, position new nodes in a circle around it
+      // with an offset away from the existing cluster
+      if (lastExpandedNodeId) {
+        const sourceNode = cy.getElementById(lastExpandedNodeId);
+        if (sourceNode.length > 0) {
+          const sourcePos = sourceNode.position();
+          const radius = 300; // Larger radius for better initial spacing
+          const angle = (2 * Math.PI * index) / nodesToAdd.length;
+          nodeData.position = {
+            x: sourcePos.x + offsetX + radius * Math.cos(angle),
+            y: sourcePos.y + offsetY + radius * Math.sin(angle),
+          };
+        }
+      }
+
+      return nodeData;
+    });
+
+    if (nodesToAddWithPosition.length > 0 || edgesToAdd.length > 0) {
+      cy.add([
+        ...nodesToAddWithPosition,
+        ...edgesToAdd.map((e) => ({ group: 'edges' as const, data: { ...e.data } })),
+      ]);
+    }
+
+    // Check if we need to relayout
+    const currentNodeCount = cy.nodes().length;
+    const nodeCountChanged = currentNodeCount !== prevNodeCountRef.current;
+
+    // Detect layout mode change
+    const layoutModeChanged = prevLayoutModeRef.current !== null &&
+                              prevLayoutModeRef.current !== layoutMode;
+    prevLayoutModeRef.current = layoutMode;
+
+    // Detect path view activation — always force layout when entering path view
+    const pathViewJustActivated = pathView.active && !prevPathViewActiveRef.current;
+    prevPathViewActiveRef.current = pathView.active;
+
+    // Guard: only trigger layout when there are actual changes requiring repositioning.
+    // Note: CytoscapeComponent may add elements via props before this effect runs,
+    // so hasNewElements can be false even when nodeCountChanged is true (initial load).
+    const hasNewElements = nodesToAdd.length > 0 || edgesToAdd.length > 0;
+    const needsLayout = hasNewElements || layoutModeChanged || nodeCountChanged || pathViewJustActivated;
+    if (!needsLayout || currentNodeCount === 0) {
+      prevNodeCountRef.current = currentNodeCount;
+      // Still clear expanded ref if set, even though no layout runs
+      if (lastExpandedNodeId) clearLastExpanded();
+      // Fall through to path view styling below (don't return early)
+    } else if (needsLayout && currentNodeCount > 0) {
+      // Cancel any pending debounced layout
+      if (layoutDebounceRef.current) {
+        clearTimeout(layoutDebounceRef.current);
+        layoutDebounceRef.current = null;
+      }
+
+      // Capture a generation token so async callbacks can detect staleness
+      const layoutGeneration = ++layoutGenerationRef.current;
+
+      // Helper: stop previous layout before starting a new one
+      const stopPreviousLayout = () => {
+        if (runningLayoutRef.current) {
+          runningLayoutRef.current.stop();
+          runningLayoutRef.current = null;
+        }
+      };
+
+      // Helper: save current node positions to layout cache
+      const savePositionsToCache = () => {
+        const nodeIds = cy.nodes().map((n) => n.id());
+        const edgeKeys = cy.edges().map((e) => `${e.source().id()}-${e.target().id()}`);
+        const hash = computeGraphHash(nodeIds, edgeKeys);
+        const positions = new Map<string, { x: number; y: number }>();
+        cy.nodes().forEach((n) => { positions.set(n.id(), { ...n.position() }); });
+        saveLayoutPositions(layoutMode, hash, positions);
+      };
+
+      // Helper: track a layout and run it (with staleness guard)
+      const trackAndRun = (layout: cytoscape.Layouts) => {
+        // If a newer layout request has been made, don't start this one
+        if (layoutGeneration !== layoutGenerationRef.current) return;
+        stopPreviousLayout();
+        runningLayoutRef.current = layout;
+        layout.on('layoutstop', () => {
+          if (runningLayoutRef.current === layout) {
+            runningLayoutRef.current = null;
+          }
+          savePositionsToCache();
+        });
+        layout.run();
+      };
+
+      const executeLayout = () => {
+        // Re-check staleness: a newer effect invocation may have superseded this one
+        if (layoutGeneration !== layoutGenerationRef.current) return;
+
+        // Stop any layout that started from a previous debounce cycle
+        stopPreviousLayout();
+
+        // Check layout cache: if we have cached positions for this graph + mode, apply instantly
+        if (layoutModeChanged && !pathView.active) {
+          const nodeIds = cy.nodes().map((n) => n.id());
+          const edgeKeys = cy.edges().map((e) => `${e.source().id()}-${e.target().id()}`);
+          const hash = computeGraphHash(nodeIds, edgeKeys);
+          const cached = getLayoutPositions(layoutMode, hash);
+          if (cached) {
+            cy.batch(() => {
+              cy.nodes().forEach((n) => {
+                const pos = cached.get(n.id());
+                if (pos) n.position(pos);
+              });
+            });
+            return;
+          }
+        }
+
+        // Re-read node count at execution time (not capture time) for accurate adaptive config
+        const freshNodeCount = cy.nodes().length;
+
+        if (pathView.active) {
+          // Path view: full layout without constraints for optimal linear arrangement
+          const layout = cy.layout(getPathLayoutOptions() as any);
+          trackAndRun(layout);
+        } else if (existingNodeIds.size > 0 && nodesToAdd.length > 0 && layoutMode === 'directed-flow' && lastExpandedNodeId) {
+          // Directed-flow incremental: compute positions for new nodes using directed BFS
+          const newNodeIdSet = new Set(nodesToAdd.map(n => n.data.id));
+          const allCyNodes = cy.nodes().map((n) => ({ id: n.id() }));
+          const allCyEdges = cy.edges().map((e) => ({
+            source: e.source().id(),
+            target: e.target().id(),
+            txCount: e.data('txCount') as number | undefined,
+          }));
+          const existingPos = new Map<string, { x: number; y: number }>();
+          cy.nodes().forEach((n) => {
+            if (!newNodeIdSet.has(n.id())) {
+              existingPos.set(n.id(), { ...n.position() });
+            }
+          });
+
+          const positions = computeIncrementalDirectedFlow(
+            allCyNodes, allCyEdges, existingPos, newNodeIdSet, lastExpandedNodeId,
+          );
+
+          // Set scratch data and run preset layout on new nodes only
+          cy.nodes().forEach((n) => {
+            const pos = positions.get(n.id());
+            if (pos) n.scratch('_directedFlowPos', pos);
+          });
+
+          const incrementalOpts = getIncrementalOptionsForMode('directed-flow');
+          if (incrementalOpts) {
+            const newNodes = cy.nodes().filter((n) => newNodeIdSet.has(n.id()));
+            const layout = newNodes.layout(incrementalOpts as any);
+            trackAndRun(layout);
+          }
+        } else if (existingNodeIds.size > 0 && nodesToAdd.length > 0 && !layoutMode.startsWith('elk-') && !layoutMode.startsWith('dagre-')) {
+          // Incremental expansion: always use fCoSE for subset layout regardless of active layout mode.
+          // fCoSE is statically registered and handles fixedNodeConstraint + subset layouts safely.
+          // Hierarchical layouts (ELK/Dagre) need full graph structure, so they fall through to full re-layout.
+          cy.nodes().forEach((node) => {
+            if (existingNodeIds.has(node.id())) {
+              node.lock();
+            }
+          });
+
+          const newNodeIds = new Set(nodesToAdd.map(n => n.data.id));
+          const newNodes = cy.nodes().filter((node) => newNodeIds.has(node.id()));
+          const expandedNode = lastExpandedNodeId ? cy.getElementById(lastExpandedNodeId) : null;
+
+          if (expandedNode && expandedNode.length > 0) {
+            const expandedPos = expandedNode.position();
+            const connectedExistingNodes = expandedNode.neighborhood('node').filter(
+              (n: cytoscape.NodeSingular) => existingNodeIds.has(n.id()) && n.id() !== lastExpandedNodeId
+            );
+
+            let directionX = 0;
+            let directionY = 0;
+
+            if (connectedExistingNodes.length > 0) {
+              let centroidX = 0;
+              let centroidY = 0;
+              connectedExistingNodes.forEach((n: cytoscape.NodeSingular) => {
+                const pos = n.position();
+                centroidX += pos.x;
+                centroidY += pos.y;
+              });
+              centroidX /= connectedExistingNodes.length;
+              centroidY /= connectedExistingNodes.length;
+
+              directionX = expandedPos.x - centroidX;
+              directionY = expandedPos.y - centroidY;
+
+              const magnitude = Math.sqrt(directionX * directionX + directionY * directionY);
+              if (magnitude > 0) {
+                directionX /= magnitude;
+                directionY /= magnitude;
+              }
+            } else {
+              directionX = 1;
+              directionY = 0;
+            }
+
+            // Estimate local density using bounding box area instead of O(n²) distance checks
+            const bbox = cy.nodes().boundingBox();
+            const bboxArea = Math.max(bbox.w * bbox.h, 1);
+            const avgDensity = cy.nodes().length / bboxArea;
+            // Scale to approximate neighbor count equivalent (comparable to old densityRadius=400 circle area)
+            const maxNeighborCount = Math.round(avgDensity * Math.PI * 400 * 400);
+
+            const newNodeCount = newNodes.length;
+            const baseDistance = 900 + Math.sqrt(newNodeCount) * 150;
+            const offsetDistance = baseDistance + (maxNeighborCount * 100);
+
+            const newExpandedX = expandedPos.x + (directionX * offsetDistance);
+            const newExpandedY = expandedPos.y + (directionY * offsetDistance);
+
+            expandedNode.unlock();
+            expandedNode.position({ x: newExpandedX, y: newExpandedY });
+
+            const angleStep = (2 * Math.PI) / Math.max(newNodeCount, 1);
+            const spreadRadius = Math.max(200, 100 + Math.sqrt(newNodeCount) * 50);
+
+            newNodes.forEach((node: cytoscape.NodeSingular, index: number) => {
+              const angle = index * angleStep;
+              node.position({
+                x: newExpandedX + Math.cos(angle) * spreadRadius,
+                y: newExpandedY + Math.sin(angle) * spreadRadius,
+              });
+            });
+          }
+
+          const relevantEdges = cy.edges().filter((edge) => {
+            return newNodeIds.has(edge.source().id()) || newNodeIds.has(edge.target().id());
+          });
+
+          const expandedNodeCollection = expandedNode ? cy.collection().union(expandedNode) : cy.collection();
+          const elementsToLayout = newNodes.union(expandedNodeCollection).union(relevantEdges);
+
+          const fixedConstraints: Array<{ nodeId: string; position: { x: number; y: number } }> = [];
+          if (expandedNode && expandedNode.length > 0) {
+            const pos = expandedNode.position();
+            fixedConstraints.push({
+              nodeId: lastExpandedNodeId!,
+              position: { x: pos.x, y: pos.y },
+            });
+          }
+          const layoutOptions = {
+            ...getIncrementalLayoutOptions(),
+            fixedNodeConstraint: fixedConstraints.length > 0 ? fixedConstraints : undefined,
+          };
+
+          const layout = elementsToLayout.layout(layoutOptions as any);
+
+          layout.on('layoutstop', () => {
+            cy.nodes().forEach((node) => {
+              node.unlock();
+            });
+          });
+
+          trackAndRun(layout);
+        } else if (layoutMode === 'directed-flow') {
+          // Directed-flow full layout: compute positions, set scratch, run preset
+          const allCyNodes = cy.nodes().map((n) => ({ id: n.id() }));
+          const allCyEdges = cy.edges().map((e) => ({
+            source: e.source().id(),
+            target: e.target().id(),
+            txCount: e.data('txCount') as number | undefined,
+          }));
+          const positions = computeDirectedFlowPositions(allCyNodes, allCyEdges);
+          cy.nodes().forEach((n) => {
+            const pos = positions.get(n.id());
+            if (pos) n.scratch('_directedFlowPos', pos);
+          });
+          const layout = cy.layout(getLayoutOptions('directed-flow', freshNodeCount) as any);
+          trackAndRun(layout);
+        } else {
+          // All other layouts (including fcose first-time): use config registry
+          // Dynamically load layout engine if needed, then run
+          const runLayout = async () => {
+            try {
+              await ensureLayoutRegistered(layoutMode);
+              // After async load, check if this layout request is still current
+              if (layoutGeneration !== layoutGenerationRef.current) return;
+              const layout = cy.layout(getLayoutOptions(layoutMode, freshNodeCount) as any);
+              trackAndRun(layout);
+            } catch (err) {
+              if (layoutGeneration !== layoutGenerationRef.current) return;
+              console.warn(`Layout "${layoutMode}" failed, falling back to fcose:`, err);
+              const fallback = cy.layout(getLayoutOptions('fcose', freshNodeCount) as any);
+              trackAndRun(fallback);
+            }
+          };
+          runLayout();
+        }
+      };
+
+      // Debounce layout runs — longer for physics-based layouts (Cola)
+      // which are expensive, shorter for deterministic layouts.
+      const debounceMs = layoutMode === 'cola' ? 300 : 150;
+      layoutDebounceRef.current = setTimeout(executeLayout, debounceMs);
+
+      // Clear the expanded node reference after layout
+      clearLastExpanded();
+    }
+
+    // Apply path view styling
+    if (pathView.active && pathView.pathNodeOrder.length > 0) {
+      // Clear previous path classes
+      cy.nodes().removeClass('path-start path-end path-intermediate');
+      cy.edges().removeClass('path-edge');
+
+      // Use ordered array for proper start/intermediate/end detection
+      const pathOrder = pathView.pathNodeOrder;
+      if (pathOrder.length >= 2) {
+        // First node is start (periwinkle)
+        cy.getElementById(pathOrder[0]).addClass('path-start');
+        // Last node is end (pink)
+        cy.getElementById(pathOrder[pathOrder.length - 1]).addClass('path-end');
+
+        // All nodes in between are intermediate (yellow)
+        for (let i = 1; i < pathOrder.length - 1; i++) {
+          cy.getElementById(pathOrder[i]).addClass('path-intermediate');
+        }
+      }
+
+      // Style path edges
+      pathView.pathEdgeIds.forEach((edgeId) => {
+        cy.getElementById(edgeId).addClass('path-edge');
+      });
+    }
+
+    prevNodeCountRef.current = currentNodeCount;
+  }, [nodes, edges, pathView.active, pathView.pathNodeOrder, pathView.pathEdgeIds, clearLastExpanded, layoutMode]);
+
+  // Highlight edges connected to selected node with direction-based colors
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+
+    cy.batch(() => {
+      // Clear previous highlighting
+      cy.edges().removeClass('outgoing-from-selected incoming-to-selected dimmed');
+
+      if (selectedNodeId) {
+        // Use selector API instead of .filter() for better performance
+        const escapedId = selectedNodeId.replace(/"/g, '\\"');
+        const outgoingEdges = cy.edges(`[source = "${escapedId}"]`);
+        outgoingEdges.addClass('outgoing-from-selected');
+
+        const incomingEdges = cy.edges(`[target = "${escapedId}"]`);
+        incomingEdges.addClass('incoming-to-selected');
+
+        const connectedEdges = outgoingEdges.union(incomingEdges);
+        cy.edges().not(connectedEdges).addClass('dimmed');
+      }
+    });
+  }, [selectedNodeId, edges]);
+
+  // Handle path mode completion
+  useEffect(() => {
+    if (pathMode.active && pathMode.from && pathMode.to) {
+      findPath(pathMode.from, pathMode.to);
+    }
+  }, [pathMode.active, pathMode.from, pathMode.to, findPath]);
+
+  return (
+    <div ref={containerRef} className="graph-container w-full h-full relative">
+      <CytoscapeComponent
+        elements={cytoscapeElements}
+        stylesheet={stylesheet}
+        style={{ width: '100%', height: '100%' }}
+        cy={handleCyInit}
+        wheelSensitivity={0.3}
+      />
+      <NodeContextMenu cyRef={cyRef} containerRef={containerRef} />
+
+      {/* Indexing overlay */}
+      {indexingAddresses.size > 0 && (
+        <div className="absolute inset-0 flex items-center justify-center z-40 pointer-events-none">
+          <div className="nq-card text-center pointer-events-auto">
+            <div className="text-nq-pink font-bold uppercase tracking-wider nq-pulse">
+              Indexing address...
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tooltip - NQ style */}
+      <NodeTooltip
+        visible={tooltip.visible}
+        nodeId={tooltip.nodeId}
+        x={tooltip.x}
+        y={tooltip.y}
+        nodesMap={nodesMap}
+      />
+      <EdgeTooltip
+        visible={edgeTooltip.visible}
+        edgeId={edgeTooltip.edgeId}
+        x={edgeTooltip.x}
+        y={edgeTooltip.y}
+        edgesMap={edgesMap}
+      />
+    </div>
+  );
+}

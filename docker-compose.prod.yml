@@ -1,0 +1,60 @@
+services:
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nimiq}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nimiq}
+      POSTGRES_DB: ${POSTGRES_DB:-nimiq_graph}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nimiq} -d ${POSTGRES_DB:-nimiq_graph}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: production
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-nimiq}:${POSTGRES_PASSWORD:-nimiq}@db:5432/${POSTGRES_DB:-nimiq_graph}
+      NIMIQ_RPC_URL: ${NIMIQ_RPC_URL:-https://rpc.nimiq.network}
+      PORT: 3001
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: production
+    ports:
+      - "80:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: ${API_URL:-http://api:3001}
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - web
+      - api
+    restart: unless-stopped
+    profiles:
+      - with-nginx
+
+volumes:
+  pgdata:

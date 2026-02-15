@@ -1,0 +1,227 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Peanut.me inspired colors */
+  --nq-pink: #FF90E8;
+  --nq-pink-light: #FFB6C1;
+  --nq-pink-dark: #E91E8C;
+  --nq-yellow: #FFC900;
+  --nq-yellow-light: #FEF3C7;
+  --nq-periwinkle: #8B8BF5;
+  --nq-periwinkle-light: #C4C4FC;
+  --nq-purple: #6340DF;
+  --nq-cream: #FAF4F0;
+  --nq-black: #000000;
+  --nq-white: #FFFFFF;
+}
+
+body {
+  @apply bg-nq-cream text-nq-black;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+/* NQ utility classes */
+@layer components {
+  /* Card styles - Peanut.me inspired (thinner borders, minimal radius) */
+  .nq-card {
+    @apply bg-nq-white rounded-sm p-4 border-2 border-nq-black;
+    box-shadow: 4px 4px 0 0 #000000;
+  }
+
+  .nq-card-pink {
+    @apply bg-nq-pink text-nq-white rounded-sm p-4 border-2 border-nq-black;
+    box-shadow: 4px 4px 0 0 #000000;
+  }
+
+  .nq-card-yellow {
+    @apply bg-nq-yellow text-nq-black rounded-sm p-4 border-2 border-nq-black;
+    box-shadow: 4px 4px 0 0 #000000;
+  }
+
+  .nq-card-periwinkle {
+    @apply bg-nq-periwinkle text-nq-white rounded-sm p-4 border-2 border-nq-black;
+    box-shadow: 4px 4px 0 0 #000000;
+  }
+
+  .nq-card-cream {
+    @apply bg-nq-cream text-nq-black rounded-sm p-4 border-2 border-nq-black;
+    box-shadow: 4px 4px 0 0 #000000;
+  }
+
+  /* Button styles - Peanut.me inspired (active press effect) */
+  .nq-btn {
+    @apply px-6 py-2 rounded-sm font-bold uppercase tracking-wide;
+    @apply border-2 border-nq-black transition-all duration-200;
+    @apply hover:-translate-y-0.5;
+    @apply active:translate-x-[3px] active:translate-y-[4px] active:shadow-none;
+    @apply disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0;
+    box-shadow: 4px 4px 0 0 #000000;
+  }
+
+  .nq-btn:hover:not(:disabled):not(:active) {
+    box-shadow: 5px 5px 0 0 #000000;
+  }
+
+  .nq-btn-pink {
+    @apply nq-btn bg-nq-pink text-nq-white;
+  }
+
+  .nq-btn-pink:hover:not(:disabled) {
+    @apply bg-nq-pink-dark;
+  }
+
+  .nq-btn-yellow {
+    @apply nq-btn bg-nq-yellow text-nq-black;
+  }
+
+  .nq-btn-periwinkle {
+    @apply nq-btn bg-nq-periwinkle text-nq-white;
+  }
+
+  .nq-btn-white {
+    @apply nq-btn bg-nq-white text-nq-black;
+  }
+
+  .nq-btn-outline {
+    @apply nq-btn bg-transparent text-nq-black;
+  }
+
+  .nq-btn-outline:hover:not(:disabled) {
+    @apply bg-nq-black text-nq-white;
+  }
+
+  /* Input styles - Peanut.me inspired */
+  .nq-input {
+    @apply w-full px-4 py-2 bg-nq-white text-nq-black rounded-sm;
+    @apply border-2 border-nq-black;
+    @apply placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-nq-pink;
+    @apply disabled:bg-gray-100 disabled:cursor-not-allowed;
+  }
+
+  .nq-input-dark {
+    @apply w-full px-4 py-2 bg-nq-black text-nq-white rounded-sm;
+    @apply border-2 border-nq-white;
+    @apply placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-nq-pink;
+    @apply disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  /* Select styles - Peanut.me inspired */
+  .nq-select {
+    @apply w-full px-4 py-2 bg-nq-white text-nq-black rounded-sm;
+    @apply border-2 border-nq-black;
+    @apply focus:outline-none focus:ring-2 focus:ring-nq-pink cursor-pointer;
+    @apply disabled:bg-gray-100 disabled:cursor-not-allowed;
+  }
+
+  /* Tag/Badge styles - Peanut.me inspired */
+  .nq-tag {
+    @apply inline-block px-4 py-1 rounded-sm text-sm font-bold uppercase;
+    @apply border-2 border-nq-black bg-nq-white;
+  }
+
+  .nq-tag-pink {
+    @apply inline-block px-4 py-1 rounded-sm text-sm font-bold uppercase;
+    @apply border-2 border-nq-black bg-nq-pink text-nq-black;
+  }
+
+  .nq-tag-yellow {
+    @apply inline-block px-4 py-1 rounded-sm text-sm font-bold uppercase;
+    @apply border-2 border-nq-black bg-nq-yellow text-nq-black;
+  }
+
+  .nq-tag-periwinkle {
+    @apply inline-block px-4 py-1 rounded-sm text-sm font-bold uppercase;
+    @apply border-2 border-nq-black bg-nq-periwinkle text-nq-white;
+  }
+
+  .nq-tag-green {
+    @apply inline-block px-4 py-1 rounded-sm text-sm font-bold uppercase;
+    @apply border-2 border-nq-black bg-green-400 text-nq-black;
+  }
+
+  .nq-tag-red {
+    @apply inline-block px-4 py-1 rounded-sm text-sm font-bold uppercase;
+    @apply border-2 border-nq-black bg-red-400 text-nq-white;
+  }
+
+  /* Label styles */
+  .nq-label {
+    @apply block text-xs font-bold uppercase tracking-wider mb-1;
+  }
+
+  /* Section title */
+  .nq-section-title {
+    @apply text-sm font-bold uppercase tracking-wider;
+  }
+
+  /* Divider - Peanut.me inspired */
+  .nq-divider {
+    @apply border-t-2 border-nq-black my-4;
+  }
+
+  /* Sparkle decoration */
+  .nq-sparkle::before {
+    content: '✦';
+    @apply text-nq-pink mr-2;
+  }
+
+  .nq-sparkle::after {
+    content: '✦';
+    @apply text-nq-yellow ml-2;
+  }
+}
+
+/* Graph canvas styles */
+.graph-container {
+  @apply w-full h-full bg-nq-cream;
+}
+
+/* Sidebar styles - Peanut.me inspired */
+.sidebar {
+  @apply bg-nq-white border-r-2 border-nq-black;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-nq-cream;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-nq-pink border-2 border-nq-black;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-nq-pink-dark;
+}
+
+/* Remove default focus rings - we use custom ring styles */
+*:focus {
+  outline: none;
+}
+
+/* Playful hover animations */
+@keyframes wiggle {
+  0%, 100% { transform: rotate(-3deg); }
+  50% { transform: rotate(3deg); }
+}
+
+.hover-wiggle:hover {
+  animation: wiggle 0.3s ease-in-out;
+}
+
+/* Pulse animation for loading states */
+@keyframes nq-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.nq-pulse {
+  animation: nq-pulse 1.5s ease-in-out infinite;
+}

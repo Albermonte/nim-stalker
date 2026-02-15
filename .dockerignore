@@ -1,0 +1,9 @@
+node_modules
+.git
+.next
+dist
+*.log
+.env.local
+.env
+.turbo
+.playwright-mcp

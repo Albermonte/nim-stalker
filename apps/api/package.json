@@ -1,0 +1,23 @@
+{
+  "name": "@nim-stalker/api",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "build": "bun build src/index.ts --outdir dist --target bun",
+    "start": "bun run dist/index.js",
+    "test": "bun test",
+    "db:init": "bun run src/lib/neo4j.ts"
+  },
+  "dependencies": {
+    "@albermonte/nimiq-rpc-client-ts": "^0.1.1",
+    "@elysiajs/cors": "^1.1.1",
+    "@nim-stalker/shared": "workspace:*",
+    "elysia": "^1.2.10",
+    "neo4j-driver": "^5.27.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.14",
+    "bun-types": "^1.1.14"
+  }
+}
