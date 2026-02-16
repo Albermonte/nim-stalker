@@ -76,6 +76,7 @@ services:
       start_period: 30s
 
   api:
+    image: nimiq-graph-api:dev
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -114,6 +115,7 @@ services:
           target: /app/apps/api/package.json
 
   web:
+    image: nimiq-graph-web:dev
     build:
       context: .
       dockerfile: apps/web/Dockerfile

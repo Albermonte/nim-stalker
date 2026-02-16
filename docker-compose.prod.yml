@@ -72,6 +72,7 @@ services:
     restart: unless-stopped
 
   api:
+    image: nimiq-graph-api:prod
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -105,6 +106,7 @@ services:
       start_period: 30s
 
   web:
+    image: nimiq-graph-web:prod
     build:
       context: .
       dockerfile: apps/web/Dockerfile

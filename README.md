@@ -94,6 +94,11 @@ It provides the `getTransactionsByAddress` RPC endpoint with cursor-based pagina
 docker compose up
 ```
 
+If you previously ran the production stack on the same host, force a rebuild once:
+```bash
+docker compose up --build
+```
+
 Nimiq chain data is persisted on disk at `./.data/nimiq` by default (configurable with `NIMIQ_DATA_DIR`).
 On Linux hosts, if you use a custom path, `node-data-init` will normalize ownership/permissions
 for the Nimiq node user (`NIMIQ_NODE_UID` / `NIMIQ_NODE_GID`, defaults `1001:1001`).
@@ -106,6 +111,11 @@ This spins up:
 **Production** (`docker-compose.prod.yml`):
 ```bash
 docker compose -f docker-compose.prod.yml up -d
+```
+
+After code updates, rebuild images before restarting:
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
 ```
 
 Includes:
