@@ -969,7 +969,6 @@ export function GraphCanvas() {
         stylesheet={stylesheet}
         style={{ width: '100%', height: '100%' }}
         cy={handleCyInit}
-        wheelSensitivity={0.3}
       />
       <NodeContextMenu cyRef={cyRef} containerRef={containerRef} />
 
