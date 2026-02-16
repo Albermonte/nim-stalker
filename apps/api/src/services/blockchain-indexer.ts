@@ -73,6 +73,22 @@ function unwrap<T>(result: { data?: T; error?: { code: number; message: string }
 
 // --- Consensus readiness ---
 
+export function isConsensusEstablishedResponse(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') return false
+
+  const result = (payload as { result?: unknown }).result
+  if (typeof result === 'boolean') {
+    return result
+  }
+
+  if (result && typeof result === 'object') {
+    const wrapped = result as { data?: unknown }
+    return wrapped.data === true
+  }
+
+  return false
+}
+
 async function waitForConsensus(pollInterval = 10_000): Promise<void> {
   const rpcUrl = config.nimiqRpcUrl
   let lastLog = 0
@@ -85,8 +101,8 @@ async function waitForConsensus(pollInterval = 10_000): Promise<void> {
         body: JSON.stringify({ jsonrpc: '2.0', method: 'isConsensusEstablished', params: [], id: 1 }),
       })
       if (res.ok) {
-        const data = await res.json() as { result?: boolean }
-        if (data.result === true) {
+        const data = await res.json() as unknown
+        if (isConsensusEstablishedResponse(data)) {
           console.log('[backfill] Consensus established')
           return
         }
