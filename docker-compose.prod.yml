@@ -62,6 +62,7 @@ services:
       NEO4J_server_memory_heap_max__size: 1G
       NEO4J_server_memory_pagecache_size: 2G
     volumes:
+      # External named volume: fast DB I/O and persistence unless explicitly removed.
       - neo4jdata:/data
     healthcheck:
       test: ["CMD-SHELL", "cypher-shell -u ${NEO4J_USER:-neo4j} -p ${NEO4J_PASSWORD} 'RETURN 1' || exit 1"]
@@ -124,4 +125,6 @@ services:
 
 volumes:
   neo4jdata:
+    external: true
+    name: ${NEO4J_VOLUME_NAME:-neo4jdata}
   genesis:

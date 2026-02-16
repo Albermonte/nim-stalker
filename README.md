@@ -100,6 +100,11 @@ docker compose up --build
 ```
 
 Nimiq chain data is persisted on disk at `./.data/nimiq` by default (configurable with `NIMIQ_DATA_DIR`).
+Neo4j graph data is stored in an external Docker volume (`neo4jdata` by default, configurable with `NEO4J_VOLUME_NAME`).
+Create it once before first run:
+```bash
+docker volume create neo4jdata
+```
 On Linux hosts, if you use a custom path, `node-data-init` will normalize ownership/permissions
 for the Nimiq node user (`NIMIQ_NODE_UID` / `NIMIQ_NODE_GID`, defaults `1001:1001`).
 
@@ -150,6 +155,7 @@ bun run dev
 | `NEO4J_URI` | ✅ | — | Neo4j connection URI |
 | `NEO4J_USER` | — | `neo4j` | Neo4j username |
 | `NEO4J_PASSWORD` | ✅ | — | Neo4j password |
+| `NEO4J_VOLUME_NAME` | — | `neo4jdata` | External Docker volume name used by Neo4j |
 | `NIMIQ_RPC_URL` | — | `http://localhost:8648` | Nimiq node RPC endpoint |
 | `PORT` | — | `3001` | API server port |
 | `CORS_ORIGIN` | prod | — | Allowed CORS origin |
