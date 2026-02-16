@@ -1,0 +1,123 @@
+services:
+  genesis-init:
+    image: alpine:latest
+    volumes:
+      - genesis:/genesis
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        if [ -s /genesis/nimiq-genesis-main-albatross.toml ]; then
+          echo 'Genesis file already exists'; exit 0
+        fi
+        rm -f /genesis/nimiq-genesis-main-albatross.toml
+        echo 'Downloading genesis file...'
+        wget -O /genesis/nimiq-genesis-main-albatross.toml \
+          https://ipfs.nimiq.io/ipfs/QmWcRRRw4FaKRrznMFt6KemAM35uo9QknMkDaeBzTod33R
+        echo 'Done'
+
+  node-data-init:
+    image: alpine:latest
+    user: "0:0"
+    volumes:
+      - ${NIMIQ_DATA_DIR:-./.data/nimiq}:/nimiq-data
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        mkdir -p /nimiq-data
+        chown -R ${NIMIQ_NODE_UID:-1001}:${NIMIQ_NODE_GID:-1001} /nimiq-data
+        chmod -R u+rwX,g+rwX /nimiq-data
+
+  node:
+    image: ghcr.io/albermonte/core-rs-albatross-slim:latest
+    user: "${NIMIQ_NODE_UID:-1001}:${NIMIQ_NODE_GID:-1001}"
+    environment:
+      NIMIQ_OVERRIDE_MAINNET_CONFIG: /genesis/nimiq-genesis-main-albatross.toml
+    volumes:
+      - ${NIMIQ_DATA_DIR:-./.data/nimiq}:/home/nimiq/.nimiq
+      - ./docker/nimiq-client.toml:/home/nimiq/.nimiq/client.toml:ro
+      - genesis:/genesis:ro
+    depends_on:
+      genesis-init:
+        condition: service_completed_successfully
+      node-data-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"isConsensusEstablished\",\"params\":[],\"id\":1}' http://localhost:8648"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 300s
+
+  db:
+    image: neo4j:5-community
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:?NEO4J_PASSWORD is required}
+      NEO4J_PLUGINS: '[]'
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 1G
+      NEO4J_server_memory_pagecache_size: 2G
+    volumes:
+      - neo4jdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u ${NEO4J_USER:-neo4j} -p ${NEO4J_PASSWORD} 'RETURN 1' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: production
+    ports:
+      - "3001:3001"
+    environment:
+      NEO4J_URI: bolt://db:7687
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?NEO4J_PASSWORD is required}
+      NIMIQ_RPC_URL: ${NIMIQ_RPC_URL:-http://node:8648}
+      CORS_ORIGIN: ${CORS_ORIGIN:?CORS_ORIGIN is required in production}
+      API_KEY: ${API_KEY:?API_KEY is required in production}
+      PORT: 3001
+      SENSITIVE_RATE_LIMIT_WINDOW_MS: ${SENSITIVE_RATE_LIMIT_WINDOW_MS:-60000}
+      SENSITIVE_RATE_LIMIT_PER_WINDOW: ${SENSITIVE_RATE_LIMIT_PER_WINDOW:-300}
+      SENSITIVE_RATE_LIMIT_MAIN_ORIGIN_PER_WINDOW: ${SENSITIVE_RATE_LIMIT_MAIN_ORIGIN_PER_WINDOW:-100000}
+      MAIN_ORIGIN_HOSTS: ${MAIN_ORIGIN_HOSTS:-localhost,nimstalker.com,www.nimstalker.com}
+      NODE_ENV: production
+    depends_on:
+      db:
+        condition: service_healthy
+      node:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "bun -e 'fetch(\"http://localhost:3001/health\").then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))'"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: production
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?NEXT_PUBLIC_API_URL is required}
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  neo4jdata:
+  genesis:
