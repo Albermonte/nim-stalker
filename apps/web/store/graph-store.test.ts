@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterAll, mock } from 'bun:test';
 import { IndexStatus, type CytoscapeNode, type CytoscapeEdge } from '@nim-stalker/shared';
 
 // Mock sonner before importing the store
@@ -55,10 +55,6 @@ const mockApi = {
 
 mock.module('@/lib/api', () => ({
   api: mockApi,
-}));
-
-mock.module('@/lib/format-utils', () => ({
-  formatNimiqAddress: (addr: string) => addr.toUpperCase().replace(/\s+/g, ' ').trim(),
 }));
 
 // Import the store after mocking
@@ -574,5 +570,10 @@ describe('graph-store', () => {
 
       expect(useGraphStore.getState().lastExpandedNodeId).toBeNull();
     });
+  });
+
+  afterAll(() => {
+    // Prevent module mocks in this file from affecting other test files.
+    mock.restore();
   });
 });

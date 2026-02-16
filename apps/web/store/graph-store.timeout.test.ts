@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
+import { describe, test, expect, mock, beforeEach, afterAll } from 'bun:test';
 
 mock.module('sonner', () => ({
   toast: {
@@ -46,5 +46,10 @@ describe('job polling timeout', () => {
     expect(result).not.toBeNull();
     expect(result?.status).toBe('ERROR');
     expect(result?.error).toContain('Timed out waiting for indexing job');
+  });
+
+  afterAll(() => {
+    // Prevent module mocks in this file from affecting other test files.
+    mock.restore();
   });
 });
