@@ -95,6 +95,8 @@ docker compose up
 ```
 
 Nimiq chain data is persisted on disk at `./.data/nimiq` by default (configurable with `NIMIQ_DATA_DIR`).
+On Linux hosts, if you use a custom path, `node-data-init` will normalize ownership/permissions
+for the Nimiq node user (`NIMIQ_NODE_UID` / `NIMIQ_NODE_GID`, defaults `1001:1001`).
 
 This spins up:
 - **Neo4j** — Graph database on `bolt://localhost:7687` (browser at `http://localhost:7474`)

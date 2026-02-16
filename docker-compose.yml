@@ -17,8 +17,23 @@ services:
           https://ipfs.nimiq.io/ipfs/QmWcRRRw4FaKRrznMFt6KemAM35uo9QknMkDaeBzTod33R
         echo 'Done'
 
+  node-data-init:
+    image: alpine:latest
+    user: "0:0"
+    volumes:
+      - ${NIMIQ_DATA_DIR:-./.data/nimiq}:/nimiq-data
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        mkdir -p /nimiq-data
+        chown -R ${NIMIQ_NODE_UID:-1001}:${NIMIQ_NODE_GID:-1001} /nimiq-data
+        chmod -R u+rwX,g+rwX /nimiq-data
+
   node:
     image: ghcr.io/albermonte/core-rs-albatross-slim:latest
+    user: "${NIMIQ_NODE_UID:-1001}:${NIMIQ_NODE_GID:-1001}"
     environment:
       NIMIQ_OVERRIDE_MAINNET_CONFIG: /genesis/nimiq-genesis-main-albatross.toml
     volumes:
@@ -28,6 +43,8 @@ services:
       - genesis:/genesis:ro
     depends_on:
       genesis-init:
+        condition: service_completed_successfully
+      node-data-init:
         condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
