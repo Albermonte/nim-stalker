@@ -11,6 +11,7 @@ import {
   type IndexingJob,
 } from '@nim-stalker/shared';
 import { api, JobWebSocket } from '@/lib/api';
+import { getApiBaseUrl } from '@/lib/api-url';
 import { formatNimiqAddress, truncateAddress } from '@/lib/format-utils';
 
 /** Layout mode for the graph visualization */
@@ -133,7 +134,7 @@ const jobListeners = new Map<string, (job: IndexingJob) => void>();
 
 function getJobWebSocket(): JobWebSocket {
   if (jobWs) return jobWs;
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+  const API_URL = getApiBaseUrl();
   jobWs = new JobWebSocket(API_URL, {
     onSnapshot: () => {
       // Snapshot is informational; individual listeners track specific addresses

@@ -6,8 +6,9 @@ import type {
   Direction,
   FilterState,
 } from '@nim-stalker/shared';
+import { getApiBaseUrl } from './api-url';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const API_URL = getApiBaseUrl();
 
 /**
  * Build URLSearchParams from an object, filtering out null/undefined values
@@ -153,7 +154,16 @@ export class ApiClient {
 
     if (method === 'GET') {
       this.inFlight.set(cacheKey, promise);
-      promise.finally(() => this.inFlight.delete(cacheKey));
+      // Attach both fulfill/reject handlers so cleanup does not create an
+      // unhandled rejection chain when the request itself fails.
+      void promise.then(
+        () => {
+          this.inFlight.delete(cacheKey);
+        },
+        () => {
+          this.inFlight.delete(cacheKey);
+        },
+      );
     }
 
     return promise;
