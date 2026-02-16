@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./assets/readme-header.svg" alt="Nim Stalker header" width="960" />
+</p>
+
 # ✦ Nim Stalker ✦
 
 **Ever wondered where your NIM went? Now you can stalk it.** 👀
