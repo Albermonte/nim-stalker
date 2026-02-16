@@ -78,6 +78,7 @@ services:
 
   api:
     image: nimiq-graph-api:dev
+    pull_policy: build
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -117,6 +118,7 @@ services:
 
   web:
     image: nimiq-graph-web:dev
+    pull_policy: build
     build:
       context: .
       dockerfile: apps/web/Dockerfile
