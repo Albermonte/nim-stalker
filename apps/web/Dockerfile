@@ -28,7 +28,7 @@ COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /app/apps/web
-RUN npm run build
+RUN npx next build
 
 # Production stage
 FROM node:20-alpine AS production
