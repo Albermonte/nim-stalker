@@ -23,6 +23,27 @@ export function addressToUrlSlug(address: string): string {
 }
 
 /**
+ * Build a hash-based address URL (keeps app on home route)
+ */
+export function buildAddressHashUrl(address: string): string {
+  return `/#${addressToUrlSlug(address)}`;
+}
+
+/**
+ * Extract and normalize address slug from location hash
+ */
+export function getAddressSlugFromHash(hash: string): string | null {
+  if (!hash) return null;
+  const raw = hash.startsWith('#') ? hash.slice(1) : hash;
+  if (!raw) return null;
+  try {
+    return addressToUrlSlug(decodeURIComponent(raw));
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Convert a URL slug back to a clean address string (uppercase, no spaces)
  * Ready for formatNimiqAddress() to add spaces
  */

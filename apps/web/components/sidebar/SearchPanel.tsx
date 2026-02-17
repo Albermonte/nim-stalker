@@ -3,7 +3,7 @@
 import { useState, useCallback, memo } from 'react';
 import { ValidationUtils } from '@nimiq/utils';
 import { useGraphStore } from '@/store/graph-store';
-import { addressToUrlSlug } from '@/lib/url-utils';
+import { buildAddressHashUrl } from '@/lib/url-utils';
 
 type ExportFormat = 'json' | 'csv';
 
@@ -106,7 +106,7 @@ function SearchPanelInner() {
     try {
       await searchAddress(cleanAddress);
       setSearchAddressInput('');
-      window.history.pushState(null, '', '/' + addressToUrlSlug(cleanAddress));
+      window.history.pushState(null, '', buildAddressHashUrl(cleanAddress));
     } catch (err) {
       setSearchError(err instanceof Error ? err.message : 'Search failed');
     }

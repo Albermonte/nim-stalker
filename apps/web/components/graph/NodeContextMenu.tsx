@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, RefObject } from 'react';
 import type { Core } from 'cytoscape';
 import { useGraphStore } from '@/store/graph-store';
-import { addressToUrlSlug } from '@/lib/url-utils';
+import { buildAddressHashUrl } from '@/lib/url-utils';
 
 interface ContextMenuState {
   visible: boolean;
@@ -119,7 +119,7 @@ export function NodeContextMenu({ cyRef, containerRef }: NodeContextMenuProps) {
   const handleOpen = () => {
     if (menu.nodeId) {
       searchAddress(menu.nodeId);
-      window.history.pushState(null, '', '/' + addressToUrlSlug(menu.nodeId));
+      window.history.pushState(null, '', buildAddressHashUrl(menu.nodeId));
     }
     hideMenu();
   };
