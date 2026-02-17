@@ -191,6 +191,32 @@ export async function updateEdgeAggregatesForPairs(
 }
 
 /**
+ * Recompute TRANSACTED_WITH and Address.txCount from raw TRANSACTION edges.
+ * Intended for full backfill completion when per-batch aggregate updates are deferred.
+ */
+export async function rebuildAllEdgeAggregates(): Promise<void> {
+  await writeTx(async (tx) => {
+    await tx.run(
+      `MATCH (a:Address)-[t:TRANSACTION]->(b:Address)
+       WITH a, b, count(t) AS cnt, sum(toInteger(t.value)) AS total,
+            min(t.timestamp) AS firstTx, max(t.timestamp) AS lastTx
+       MERGE (a)-[r:TRANSACTED_WITH]->(b)
+       SET r.txCount = cnt, r.totalValue = toString(total),
+           r.firstTxAt = firstTx, r.lastTxAt = lastTx`
+    );
+  });
+
+  await writeTx(async (tx) => {
+    await tx.run(
+      `MATCH (a:Address)
+       OPTIONAL MATCH (a)-[t:TRANSACTION]-()
+       WITH a, count(DISTINCT t) AS cnt
+       SET a.txCount = cnt`
+    );
+  });
+}
+
+/**
  * Run the full indexing pipeline for an address.
  * Fetches transactions from RPC and stores them in Neo4j.
  */

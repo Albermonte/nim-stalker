@@ -163,6 +163,10 @@ bun run dev
 | `NIMIQ_RPC_URL` | — | `http://localhost:8648` | Nimiq node RPC endpoint |
 | `PORT` | — | `3001` | API server port |
 | `CORS_ORIGIN` | prod | — | Allowed CORS origin |
+| `BACKFILL_CHECKPOINT_INTERVAL` | — | `100` | Persist indexer progress every N processed backfill batches |
+| `BACKFILL_THROTTLE_MS` | — | `0` | Optional backfill sleep duration (ms) to reduce RPC pressure |
+| `BACKFILL_THROTTLE_EVERY_BATCHES` | — | `10` | Apply backfill throttle every N batches (when throttle > 0) |
+| `BACKFILL_DEFER_AGGREGATES` | — | `true` | Defer TRANSACTED_WITH aggregate updates until backfill completes |
 | `API_KEY` | prod | — | Required for sensitive API routes from non-main origins |
 | `MAIN_ORIGIN_HOSTS` | — | `localhost,nimstalker.com,www.nimstalker.com` | Origins treated as first-party |
 | `SENSITIVE_RATE_LIMIT_WINDOW_MS` | — | `60000` | Rate-limit window for sensitive routes |

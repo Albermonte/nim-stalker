@@ -1,6 +1,6 @@
 import type { Block, Subscription } from '@albermonte/nimiq-rpc-client-ts'
 import { ensureRpcClient, getRpcClient, mapTransaction } from './rpc-client'
-import { writeTransactionBatch, updateEdgeAggregatesForPairs } from './indexing'
+import { rebuildAllEdgeAggregates, writeTransactionBatch, updateEdgeAggregatesForPairs } from './indexing'
 import { readTx, writeTx } from '../lib/neo4j'
 import { config } from '../lib/config'
 
@@ -21,6 +21,13 @@ const state: IndexerState = {
 }
 
 let subscription: Subscription<Block> | null = null
+
+interface BackfillTuning {
+  checkpointInterval: number
+  throttleMs: number
+  throttleEveryBatches: number
+  deferAggregates: boolean
+}
 
 // --- Meta node helpers ---
 
@@ -61,6 +68,46 @@ async function incrementTotalIndexed(count: number): Promise<void> {
 
 function extractPairs(txs: Array<{ from: string; to: string }>): Array<{ from: string; to: string }> {
   return txs.map((tx) => ({ from: tx.from, to: tx.to }))
+}
+
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+  if (!raw) return fallback
+  const parsed = Number.parseInt(raw, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function parseNonNegativeInt(raw: string | undefined, fallback: number): number {
+  if (!raw) return fallback
+  const parsed = Number.parseInt(raw, 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+}
+
+function parseBoolean(raw: string | undefined, fallback: boolean): boolean {
+  if (raw == null) return fallback
+  const normalized = raw.trim().toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false
+  return fallback
+}
+
+export function parseBackfillTuning(env: Record<string, string | undefined>): BackfillTuning {
+  return {
+    checkpointInterval: parsePositiveInt(env.BACKFILL_CHECKPOINT_INTERVAL, 100),
+    throttleMs: parseNonNegativeInt(env.BACKFILL_THROTTLE_MS, 0),
+    throttleEveryBatches: parsePositiveInt(env.BACKFILL_THROTTLE_EVERY_BATCHES, 10),
+    deferAggregates: parseBoolean(env.BACKFILL_DEFER_AGGREGATES, true),
+  }
+}
+
+export function shouldPersistBackfillCheckpoint(
+  batch: number,
+  startBatch: number,
+  currentBatch: number,
+  checkpointInterval: number
+): boolean {
+  if (batch === currentBatch) return true
+  if (checkpointInterval <= 1) return true
+  return (batch - startBatch + 1) % checkpointInterval === 0
 }
 
 function unwrap<T>(result: { data?: T; error?: { code: number; message: string } }): T {
@@ -144,6 +191,7 @@ async function waitForRpc(maxRetries = 20, baseDelay = 3000): Promise<number> {
 async function runBackfill(): Promise<void> {
   await waitForConsensus()
 
+  const tuning = parseBackfillTuning(process.env)
   state.lastProcessedBatch = await getLastProcessedBatch()
   const startBatch = Math.max(1, state.lastProcessedBatch + 1)
 
@@ -156,9 +204,17 @@ async function runBackfill(): Promise<void> {
   }
 
   console.log(`[backfill] Starting from batch ${startBatch} to ${currentBatch} (${currentBatch - startBatch + 1} batches)`)
+  console.log(
+    `[backfill] Tuning checkpointEvery=${tuning.checkpointInterval}, throttle=${tuning.throttleMs}ms/${tuning.throttleEveryBatches} batches, deferAggregates=${tuning.deferAggregates}`
+  )
+
+  let aggregateRebuildNeeded = false
 
   for (let batch = startBatch; batch <= currentBatch; batch++) {
     if (!state.running) {
+      if (state.lastProcessedBatch >= startBatch) {
+        await setLastProcessedBatch(state.lastProcessedBatch)
+      }
       console.log('[backfill] Stopped')
       return
     }
@@ -172,23 +228,36 @@ async function runBackfill(): Promise<void> {
         const writeResult = await writeTransactionBatch(txs)
 
         if (writeResult.count > 0) {
-          const pairs = extractPairs(txs)
-          await updateEdgeAggregatesForPairs(pairs)
+          if (tuning.deferAggregates) {
+            aggregateRebuildNeeded = true
+          } else {
+            const pairs = extractPairs(txs)
+            await updateEdgeAggregatesForPairs(pairs)
+          }
           state.totalTransactionsIndexed += writeResult.count
           await incrementTotalIndexed(writeResult.count)
         }
       }
 
       state.lastProcessedBatch = batch
-      await setLastProcessedBatch(batch)
+      const shouldPersist = shouldPersistBackfillCheckpoint(
+        batch,
+        startBatch,
+        currentBatch,
+        tuning.checkpointInterval
+      )
+      const isFinalBatch = batch === currentBatch
+      if (shouldPersist && (!isFinalBatch || !tuning.deferAggregates)) {
+        await setLastProcessedBatch(batch)
+      }
 
       if (batch % 100 === 0) {
         console.log(`[backfill] Batch ${batch}/${currentBatch} (${((batch - startBatch + 1) / (currentBatch - startBatch + 1) * 100).toFixed(1)}%)`)
       }
 
       // Small delay to avoid overwhelming the RPC node
-      if (batch % 10 === 0) {
-        await new Promise((r) => setTimeout(r, 50))
+      if (tuning.throttleMs > 0 && batch % tuning.throttleEveryBatches === 0) {
+        await new Promise((r) => setTimeout(r, tuning.throttleMs))
       }
     } catch (error) {
       console.error(`[backfill] Error processing batch ${batch}:`, error instanceof Error ? error.message : error)
@@ -199,6 +268,13 @@ async function runBackfill(): Promise<void> {
     }
   }
 
+  if (tuning.deferAggregates && aggregateRebuildNeeded) {
+    console.log('[backfill] Rebuilding TRANSACTED_WITH aggregates after backfill...')
+    await rebuildAllEdgeAggregates()
+    console.log('[backfill] Aggregate rebuild complete')
+  }
+
+  await setLastProcessedBatch(state.lastProcessedBatch)
   console.log(`[backfill] Complete — processed up to batch ${state.lastProcessedBatch}`)
 }
 

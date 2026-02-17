@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { isConsensusEstablishedResponse } from './blockchain-indexer'
+import {
+  isConsensusEstablishedResponse,
+  parseBackfillTuning,
+  shouldPersistBackfillCheckpoint,
+} from './blockchain-indexer'
 
 describe('isConsensusEstablishedResponse', () => {
   test('treats wrapped JSON-RPC result.data=true as established', () => {
@@ -15,5 +19,51 @@ describe('isConsensusEstablishedResponse', () => {
     expect(isConsensusEstablishedResponse({ result: false })).toBe(false)
     expect(isConsensusEstablishedResponse({ error: { code: -32601, message: 'Method not found' } })).toBe(false)
     expect(isConsensusEstablishedResponse({})).toBe(false)
+  })
+})
+
+describe('parseBackfillTuning', () => {
+  test('uses defaults when env variables are absent', () => {
+    const tuning = parseBackfillTuning({})
+
+    expect(tuning).toEqual({
+      checkpointInterval: 100,
+      throttleEveryBatches: 10,
+      throttleMs: 0,
+      deferAggregates: true,
+    })
+  })
+
+  test('parses valid tuning values', () => {
+    const tuning = parseBackfillTuning({
+      BACKFILL_CHECKPOINT_INTERVAL: '250',
+      BACKFILL_THROTTLE_EVERY_BATCHES: '5',
+      BACKFILL_THROTTLE_MS: '20',
+      BACKFILL_DEFER_AGGREGATES: 'false',
+    })
+
+    expect(tuning).toEqual({
+      checkpointInterval: 250,
+      throttleEveryBatches: 5,
+      throttleMs: 20,
+      deferAggregates: false,
+    })
+  })
+})
+
+describe('shouldPersistBackfillCheckpoint', () => {
+  test('persists every N processed batches', () => {
+    expect(shouldPersistBackfillCheckpoint(100, 1, 1000, 100)).toBe(true)
+    expect(shouldPersistBackfillCheckpoint(101, 1, 1000, 100)).toBe(false)
+    expect(shouldPersistBackfillCheckpoint(200, 1, 1000, 100)).toBe(true)
+  })
+
+  test('always persists the final batch', () => {
+    expect(shouldPersistBackfillCheckpoint(1000, 1, 1000, 100)).toBe(true)
+  })
+
+  test('persists every batch when interval is 1', () => {
+    expect(shouldPersistBackfillCheckpoint(10, 1, 1000, 1)).toBe(true)
+    expect(shouldPersistBackfillCheckpoint(11, 1, 1000, 1)).toBe(true)
   })
 })
