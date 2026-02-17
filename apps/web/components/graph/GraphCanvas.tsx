@@ -709,6 +709,17 @@ export function GraphCanvas() {
                 if (pos) n.position(pos);
               });
             });
+
+            // Keep camera behavior consistent with normal layout runs:
+            // when a cached layout is applied, still fit if that layout mode expects fit.
+            const cachedLayoutOpts = getLayoutOptions(layoutMode, cy.nodes().length) as {
+              fit?: boolean;
+              padding?: number;
+            };
+            if (cachedLayoutOpts.fit !== false) {
+              const padding = typeof cachedLayoutOpts.padding === 'number' ? cachedLayoutOpts.padding : 30;
+              cy.fit(cy.elements(), padding);
+            }
             return;
           }
         }
