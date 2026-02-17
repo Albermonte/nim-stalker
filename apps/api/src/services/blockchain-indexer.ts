@@ -110,6 +110,32 @@ export function shouldPersistBackfillCheckpoint(
   return (batch - startBatch + 1) % checkpointInterval === 0
 }
 
+export function estimateBackfillEtaMs(
+  processedBatches: number,
+  remainingBatches: number,
+  elapsedMs: number
+): number | null {
+  if (processedBatches <= 0 || remainingBatches < 0 || elapsedMs <= 0) return null
+  const avgMsPerBatch = elapsedMs / processedBatches
+  const etaMs = Math.round(avgMsPerBatch * remainingBatches)
+  return Number.isFinite(etaMs) ? etaMs : null
+}
+
+export function formatEta(etaMs: number | null): string {
+  if (etaMs == null || !Number.isFinite(etaMs)) return 'unknown'
+
+  const totalSeconds = Math.max(0, Math.floor(etaMs / 1000))
+  const days = Math.floor(totalSeconds / 86_400)
+  const hours = Math.floor((totalSeconds % 86_400) / 3_600)
+  const minutes = Math.floor((totalSeconds % 3_600) / 60)
+  const seconds = totalSeconds % 60
+
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${minutes}m`
+  if (minutes > 0) return `${minutes}m ${seconds}s`
+  return `${seconds}s`
+}
+
 function unwrap<T>(result: { data?: T; error?: { code: number; message: string } }): T {
   const { data, error } = result
   if (error) {
@@ -208,6 +234,7 @@ async function runBackfill(): Promise<void> {
     `[backfill] Tuning checkpointEvery=${tuning.checkpointInterval}, throttle=${tuning.throttleMs}ms/${tuning.throttleEveryBatches} batches, deferAggregates=${tuning.deferAggregates}`
   )
 
+  const backfillStartMs = Date.now()
   let aggregateRebuildNeeded = false
 
   for (let batch = startBatch; batch <= currentBatch; batch++) {
@@ -252,7 +279,11 @@ async function runBackfill(): Promise<void> {
       }
 
       if (batch % 100 === 0) {
-        console.log(`[backfill] Batch ${batch}/${currentBatch} (${((batch - startBatch + 1) / (currentBatch - startBatch + 1) * 100).toFixed(1)}%)`)
+        const processedBatches = batch - startBatch + 1
+        const remainingBatches = currentBatch - batch
+        const etaMs = estimateBackfillEtaMs(processedBatches, remainingBatches, Date.now() - backfillStartMs)
+        const progress = ((processedBatches / (currentBatch - startBatch + 1)) * 100).toFixed(1)
+        console.log(`[backfill] Batch ${batch}/${currentBatch} (${progress}%, ETA ${formatEta(etaMs)})`)
       }
 
       // Small delay to avoid overwhelming the RPC node

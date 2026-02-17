@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  estimateBackfillEtaMs,
+  formatEta,
   isConsensusEstablishedResponse,
   parseBackfillTuning,
   shouldPersistBackfillCheckpoint,
@@ -65,5 +67,36 @@ describe('shouldPersistBackfillCheckpoint', () => {
   test('persists every batch when interval is 1', () => {
     expect(shouldPersistBackfillCheckpoint(10, 1, 1000, 1)).toBe(true)
     expect(shouldPersistBackfillCheckpoint(11, 1, 1000, 1)).toBe(true)
+  })
+})
+
+describe('estimateBackfillEtaMs', () => {
+  test('estimates remaining time from elapsed time and processed batch count', () => {
+    // 500 batches in 100 seconds = 0.2s/batch => 1000 remaining batches = 200s
+    expect(estimateBackfillEtaMs(500, 1000, 100_000)).toBe(200_000)
+  })
+
+  test('returns null for invalid inputs', () => {
+    expect(estimateBackfillEtaMs(0, 100, 10_000)).toBeNull()
+    expect(estimateBackfillEtaMs(10, -1, 10_000)).toBeNull()
+    expect(estimateBackfillEtaMs(10, 100, 0)).toBeNull()
+  })
+})
+
+describe('formatEta', () => {
+  test('formats minutes and seconds', () => {
+    expect(formatEta(200_000)).toBe('3m 20s')
+  })
+
+  test('formats hours and minutes', () => {
+    expect(formatEta(3_780_000)).toBe('1h 3m')
+  })
+
+  test('formats days and hours', () => {
+    expect(formatEta(176_400_000)).toBe('2d 1h')
+  })
+
+  test('returns unknown when ETA cannot be estimated', () => {
+    expect(formatEta(null)).toBe('unknown')
   })
 })
