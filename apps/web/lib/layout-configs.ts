@@ -18,6 +18,7 @@ export const LAYOUT_CATEGORIES: LayoutCategory[] = [
     label: 'Force-Directed',
     layouts: [
       { id: 'fcose', label: 'fCoSE', description: 'Spring-based force simulation' },
+      { id: 'fcose-weighted', label: 'fCoSE Weighted', description: 'Strong ties pull closer (txCount log-scale)' },
       { id: 'cola', label: 'Cola', description: 'Constraint-based' },
     ],
   },
@@ -36,6 +37,8 @@ export const LAYOUT_CATEGORIES: LayoutCategory[] = [
     label: 'Flow',
     layouts: [
       { id: 'directed-flow', label: 'Directed Flow', description: 'Radial outward flow by tx direction' },
+      { id: 'biflow-lr', label: 'BiFlow \u2194', description: 'Incoming left, outgoing right from focus' },
+      { id: 'biflow-tb', label: 'BiFlow \u2195', description: 'Incoming up, outgoing down from focus' },
     ],
   },
   {
@@ -43,9 +46,28 @@ export const LAYOUT_CATEGORIES: LayoutCategory[] = [
     label: 'Other',
     layouts: [
       { id: 'elk-stress', label: 'ELK Stress', description: 'Stress minimization' },
+      { id: 'concentric-volume', label: 'Concentric (Volume)', description: 'Hubs in center by \u03a3txCount' },
     ],
   },
 ];
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, n));
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+function readTxCountFromEdge(edge: any): number {
+  try {
+    const raw = typeof edge?.data === 'function' ? edge.data('txCount') : edge?.data?.txCount;
+    const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : 0;
+    return Number.isFinite(n) && n > 0 ? n : 1;
+  } catch {
+    return 1;
+  }
+}
 
 /** Get the Cytoscape layout options object for a given layout mode */
 export function getLayoutOptions(mode: LayoutMode, nodeCount?: number): Record<string, unknown> {
@@ -68,6 +90,21 @@ export function getLayoutOptions(mode: LayoutMode, nodeCount?: number): Record<s
         numIter: 2500,
         tile: true,
       };
+
+    case 'fcose-weighted': {
+      const base = getLayoutOptions('fcose', nodeCount) as any;
+      return {
+        ...base,
+        // Heavy-tailed txCount: log-scale to avoid giant edges dominating.
+        // t = clamp(log10(1+txCount)/6, 0..1)
+        // edgeLen = lerp(320, 90, t)
+        idealEdgeLength: (edge: any) => {
+          const txCount = readTxCountFromEdge(edge);
+          const t = clamp(Math.log10(1 + txCount) / 6, 0, 1);
+          return lerp(320, 90, t);
+        },
+      };
+    }
 
     case 'cola':
       return {
@@ -133,6 +170,29 @@ export function getLayoutOptions(mode: LayoutMode, nodeCount?: number): Record<s
         animationDuration: 500,
       };
 
+    case 'concentric-volume':
+      return {
+        name: 'concentric',
+        fit: true,
+        padding: 120,
+        animate: true,
+        animationDuration: 500,
+        avoidOverlap: true,
+        minNodeSpacing: 40,
+        concentric: (node: any) => {
+          try {
+            const edges = typeof node?.connectedEdges === 'function' ? node.connectedEdges() : null;
+            if (!edges) return 0;
+            let sum = 0;
+            edges.forEach((e: any) => { sum += readTxCountFromEdge(e); });
+            return Math.log10(1 + sum);
+          } catch {
+            return 0;
+          }
+        },
+        levelWidth: () => 0.5,
+      };
+
     case 'dagre-tb':
       return {
         name: 'dagre',
@@ -157,6 +217,19 @@ export function getLayoutOptions(mode: LayoutMode, nodeCount?: number): Record<s
         padding: 120,
         animate: true,
         animationDuration: 500,
+      };
+
+    case 'biflow-lr':
+    case 'biflow-tb':
+      return {
+        name: 'preset',
+        fit: true,
+        padding: 120,
+        animate: true,
+        animationDuration: 500,
+        positions: (node: any) => {
+          return node.scratch('_biflowPos') || node.position();
+        },
       };
 
     case 'directed-flow':

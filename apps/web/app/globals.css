@@ -225,3 +225,25 @@ body {
 .nq-pulse {
   animation: nq-pulse 1.5s ease-in-out infinite;
 }
+
+.graph-container .cytoscape-navigator {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--nq-cream);
+  overflow: hidden;
+}
+
+.graph-container .cytoscape-navigator > canvas,
+.graph-container .cytoscape-navigator > img,
+.graph-container .cytoscape-navigatorOverlay,
+.graph-container .cytoscape-navigatorView {
+  position: absolute;
+  inset: 0;
+}
+
+.graph-container .cytoscape-navigatorView {
+  cursor: move;
+  background: rgba(139, 139, 245, 0.25);
+}

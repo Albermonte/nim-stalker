@@ -14,6 +14,7 @@ function getExtensionName(mode: string): string {
   if (mode.startsWith('elk-')) return 'elk';
   if (mode.startsWith('dagre-')) return 'dagre';
   if (mode === 'directed-flow') return 'preset';
+  if (mode.startsWith('biflow-')) return 'preset';
   return mode; // cola
 }
 

@@ -109,6 +109,9 @@ Create it once before first run:
 ```bash
 docker volume create neo4jdata
 ```
+If `nimiq-graph-node-1` keeps restarting with `ExitCode 137` / unhealthy status, reduce Neo4j memory
+with `NEO4J_HEAP_INITIAL`, `NEO4J_HEAP_MAX`, `NEO4J_PAGECACHE`, and `NEO4J_MEMORY_LIMIT`
+or increase Docker Desktop memory.
 On Linux hosts, if you use a custom path, `node-data-init` will normalize ownership/permissions
 for the Nimiq node user (`NIMIQ_NODE_UID` / `NIMIQ_NODE_GID`, defaults `1001:1001`).
 
@@ -160,6 +163,11 @@ bun run dev
 | `NEO4J_USER` | — | `neo4j` | Neo4j username |
 | `NEO4J_PASSWORD` | ✅ | — | Neo4j password |
 | `NEO4J_VOLUME_NAME` | — | `neo4jdata` | External Docker volume name used by Neo4j |
+| `NEO4J_HEAP_INITIAL` | — | `512m` (dev), `1G` (prod) | Neo4j JVM initial heap size |
+| `NEO4J_HEAP_MAX` | — | `1G` (dev), `2G` (prod) | Neo4j JVM max heap size |
+| `NEO4J_PAGECACHE` | — | `512m` (dev), `2G` (prod) | Neo4j page cache budget |
+| `NEO4J_MEMORY_LIMIT` | — | `3G` (dev) | Docker memory limit for Neo4j container |
+| `NEO4J_TX_MEMORY_MAX` | — | `512m` (dev), `1G` (prod) | Neo4j transaction memory cap |
 | `NIMIQ_RPC_URL` | — | `http://localhost:8648` | Nimiq node RPC endpoint |
 | `PORT` | — | `3001` | API server port |
 | `CORS_ORIGIN` | prod | — | Allowed CORS origin |

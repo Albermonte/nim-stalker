@@ -11,11 +11,15 @@ import { bindCyEvents } from './graph-events';
 import { getLayoutOptions, getPathLayoutOptions, getIncrementalLayoutOptions, getIncrementalOptionsForMode } from '@/lib/layout-configs';
 import { ensureLayoutRegistered } from '@/lib/layout-loader';
 import { computeDirectedFlowPositions, computeIncrementalDirectedFlow } from '@/lib/layout-directed-flow';
+import { computeBiFlowPositions } from '@/lib/layout-biflow';
 import { identiconManager } from '@/lib/identicon-manager';
 import { computeGraphHash, saveLayoutPositions, getLayoutPositions } from '@/lib/layout-cache';
+import { registerUiExtensions, attachUiExtensions } from '@/lib/cytoscape-ui-extensions';
+import { CYTOSCAPE_UI_EXTENSION_MODULES, CYTOSCAPE_OVERLAYS_API } from '@/lib/cytoscape-ui-extension-modules';
 
 // Register default layout statically (always needed)
 cytoscape.use(fcose);
+registerUiExtensions(cytoscape, CYTOSCAPE_UI_EXTENSION_MODULES);
 
 // NQ stylesheet - colorful, rounded, playful
 // Using 'any' for style objects because TypeScript types don't include all valid Cytoscape.js properties
@@ -325,7 +329,11 @@ export function GraphCanvas() {
     const cy = cyInstance;
     if (!cy) return;
 
-    return bindCyEvents(cy, {
+    const cleanupUiExtensions = attachUiExtensions(cy, CYTOSCAPE_OVERLAYS_API, {
+      navigatorContainer: '#nq-graph-navigator',
+    });
+
+    const cleanupEvents = bindCyEvents(cy, {
       onTapNode: (evt) => {
         useGraphStore.getState().selectNode(evt.target.id());
       },
@@ -446,6 +454,11 @@ export function GraphCanvas() {
         exclusiveNeighborsRef.current = null;
       },
     });
+
+    return () => {
+      cleanupEvents();
+      cleanupUiExtensions();
+    };
   }, [cyInstance]);
 
   // Load initial data on mount
@@ -731,6 +744,58 @@ export function GraphCanvas() {
           // Path view: full layout without constraints for optimal linear arrangement
           const layout = cy.layout(getPathLayoutOptions() as any);
           trackAndRun(layout);
+        } else if (layoutMode.startsWith('biflow-')) {
+          // BiFlow: deterministic directed tiers around a focus node.
+          // Always run full layout (incremental fCoSE would destroy tier structure).
+          const selectedFromStore = useGraphStore.getState().selectedNodeId;
+
+          // Pick focus: last expanded → selected → hub
+          let focusId =
+            (lastExpandedNodeId && cy.getElementById(lastExpandedNodeId).length > 0 ? lastExpandedNodeId : null)
+            ?? (selectedFromStore && cy.getElementById(selectedFromStore).length > 0 ? selectedFromStore : null);
+
+          if (!focusId) {
+            const incidentSum = new Map<string, number>();
+            cy.edges().forEach((e) => {
+              const raw = e.data('txCount') as unknown;
+              const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : 0;
+              const txCount = Number.isFinite(n) && n > 0 ? n : 1;
+              const s = e.source().id();
+              const t = e.target().id();
+              incidentSum.set(s, (incidentSum.get(s) ?? 0) + txCount);
+              incidentSum.set(t, (incidentSum.get(t) ?? 0) + txCount);
+            });
+
+            let bestId = cy.nodes()[0]?.id() ?? '';
+            let bestScore = -Infinity;
+            for (const [id, score] of incidentSum) {
+              if (score > bestScore) {
+                bestScore = score;
+                bestId = id;
+              }
+            }
+            focusId = bestId;
+          }
+
+          const allCyNodes = cy.nodes().map((n) => ({ id: n.id() }));
+          const allCyEdges = cy.edges().map((e) => ({
+            source: e.source().id(),
+            target: e.target().id(),
+            txCount: e.data('txCount') as number | undefined,
+          }));
+
+          const orientation = layoutMode === 'biflow-lr' ? 'LR' : 'TB';
+          const positions = computeBiFlowPositions(allCyNodes, allCyEdges, focusId, orientation);
+          cy.nodes().forEach((n) => {
+            const pos = positions.get(n.id());
+            if (pos) n.scratch('_biflowPos', pos);
+          });
+
+          const layout = cy.layout(getLayoutOptions(layoutMode, freshNodeCount) as any);
+          trackAndRun(layout);
+        } else if (layoutMode === 'concentric-volume') {
+          const layout = cy.layout(getLayoutOptions('concentric-volume', freshNodeCount) as any);
+          trackAndRun(layout);
         } else if (existingNodeIds.size > 0 && nodesToAdd.length > 0 && layoutMode === 'directed-flow' && lastExpandedNodeId) {
           // Directed-flow incremental: compute positions for new nodes using directed BFS
           const newNodeIdSet = new Set(nodesToAdd.map(n => n.data.id));
@@ -763,7 +828,13 @@ export function GraphCanvas() {
             const layout = newNodes.layout(incrementalOpts as any);
             trackAndRun(layout);
           }
-        } else if (existingNodeIds.size > 0 && nodesToAdd.length > 0 && !layoutMode.startsWith('elk-') && !layoutMode.startsWith('dagre-')) {
+        } else if (
+          existingNodeIds.size > 0
+          && nodesToAdd.length > 0
+          && !layoutMode.startsWith('elk-')
+          && !layoutMode.startsWith('dagre-')
+          && !layoutMode.startsWith('biflow-')
+        ) {
           // Incremental expansion: always use fCoSE for subset layout regardless of active layout mode.
           // fCoSE is statically registered and handles fixedNodeConstraint + subset layouts safely.
           // Hierarchical layouts (ELK/Dagre) need full graph structure, so they fall through to full re-layout.
@@ -980,6 +1051,10 @@ export function GraphCanvas() {
         stylesheet={stylesheet}
         style={{ width: '100%', height: '100%' }}
         cy={handleCyInit}
+      />
+      <div
+        id="nq-graph-navigator"
+        className="absolute bottom-4 left-4 z-30 h-32 w-32 bg-nq-white border-2 border-nq-black shadow-[4px_4px_0_0_#000000] overflow-hidden pointer-events-auto"
       />
       <NodeContextMenu cyRef={cyRef} containerRef={containerRef} />
 

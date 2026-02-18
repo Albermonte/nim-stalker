@@ -17,10 +17,13 @@ import { formatNimiqAddress, truncateAddress } from '@/lib/format-utils';
 /** Layout mode for the graph visualization */
 export type LayoutMode =
   | 'fcose' | 'cola'
+  | 'fcose-weighted'
   | 'elk-layered-down' | 'elk-layered-right'
   | 'elk-stress'
   | 'dagre-tb' | 'dagre-lr'
-  | 'directed-flow';
+  | 'directed-flow'
+  | 'biflow-lr' | 'biflow-tb'
+  | 'concentric-volume';
 
 interface GraphState {
   nodes: Map<string, CytoscapeNode>;
@@ -217,8 +220,10 @@ export async function _pollJobUntilDone(
       });
     }, timeoutMs);
 
-    // Start first poll after a delay (give WebSocket a chance)
-    pollTimer = setTimeout(poll, ws.connected ? pollIntervalMs * 5 : pollIntervalMs);
+    // Start first poll after a delay (give WebSocket a chance).
+    // Always do an initial poll at the base interval so we don't stall waiting
+    // for WebSocket updates that may never arrive.
+    pollTimer = setTimeout(poll, pollIntervalMs);
   });
 }
 
@@ -467,6 +472,9 @@ export const useGraphStore = create<GraphState & GraphActions>()(
 
         // Clear existing graph before adding new results
         clearGraph();
+
+        // Anchor deterministic layouts (e.g. BiFlow) on initial render
+        set({ lastExpandedNodeId: formattedAddress });
 
         addGraphData(result.nodes, result.edges);
 

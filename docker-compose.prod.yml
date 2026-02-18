@@ -58,20 +58,20 @@ services:
     environment:
       NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:?NEO4J_PASSWORD is required}
       NEO4J_PLUGINS: '[]'
-      NEO4J_server_memory_heap_initial__size: 2G
-      NEO4J_server_memory_heap_max__size: 4G
-      NEO4J_server_memory_pagecache_size: 6G
-      NEO4J_dbms_memory_transaction_total_max: 2G
-      NEO4J_db_memory_transaction_total_max: 2G
+      NEO4J_server_memory_heap_initial__size: ${NEO4J_HEAP_INITIAL:-1G}
+      NEO4J_server_memory_heap_max__size: ${NEO4J_HEAP_MAX:-2G}
+      NEO4J_server_memory_pagecache_size: ${NEO4J_PAGECACHE:-2G}
+      NEO4J_dbms_memory_transaction_total_max: ${NEO4J_TX_MEMORY_MAX:-1G}
+      NEO4J_db_memory_transaction_total_max: ${NEO4J_TX_MEMORY_MAX:-1G}
     volumes:
       # External named volume: fast DB I/O and persistence unless explicitly removed.
       - neo4jdata:/data
     healthcheck:
-      test: ["CMD-SHELL", "cypher-shell -u ${NEO4J_USER:-neo4j} -p ${NEO4J_PASSWORD} 'RETURN 1' || exit 1"]
-      interval: 10s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
+      test: ["CMD-SHELL", "/var/lib/neo4j/bin/cypher-shell -u ${NEO4J_USER:-neo4j} -p ${NEO4J_PASSWORD} 'RETURN 1' || exit 1"]
+      interval: 15s
+      timeout: 15s
+      retries: 30
+      start_period: 600s
     restart: unless-stopped
 
   api:

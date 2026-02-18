@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, RefObject } from 'react';
 import type { Core } from 'cytoscape';
 import { useGraphStore } from '@/store/graph-store';
-import { buildAddressHashUrl } from '@/lib/url-utils';
+import { addressToUrlSlug, buildAddressHashUrl } from '@/lib/url-utils';
 
 interface ContextMenuState {
   visible: boolean;
@@ -124,6 +124,14 @@ export function NodeContextMenu({ cyRef, containerRef }: NodeContextMenuProps) {
     hideMenu();
   };
 
+  const handleTxTimeline = () => {
+    if (menu.nodeId) {
+      const slug = addressToUrlSlug(menu.nodeId);
+      window.location.href = `/tx?addr=${encodeURIComponent(slug)}&direction=both&limit=200`;
+    }
+    hideMenu();
+  };
+
   return (
     <div
       ref={menuRef}
@@ -162,6 +170,12 @@ export function NodeContextMenu({ cyRef, containerRef }: NodeContextMenuProps) {
         className="w-full px-4 py-2 text-left text-sm font-bold uppercase tracking-wide hover:bg-nq-pink hover:text-nq-white transition-colors rounded-sm"
       >
         Open Node
+      </button>
+      <button
+        onClick={handleTxTimeline}
+        className="w-full px-4 py-2 text-left text-sm font-bold uppercase tracking-wide hover:bg-nq-pink hover:text-nq-white transition-colors rounded-sm"
+      >
+        Tx Timeline
       </button>
       <div className="border-t border-nq-black my-1" />
       <button
