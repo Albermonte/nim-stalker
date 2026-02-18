@@ -15,7 +15,7 @@ import { computeBiFlowPositions } from '@/lib/layout-biflow';
 import { identiconManager } from '@/lib/identicon-manager';
 import { computeGraphHash, saveLayoutPositions, getLayoutPositions } from '@/lib/layout-cache';
 import { registerUiExtensions, attachUiExtensions } from '@/lib/cytoscape-ui-extensions';
-import { CYTOSCAPE_UI_EXTENSION_MODULES, CYTOSCAPE_OVERLAYS_API } from '@/lib/cytoscape-ui-extension-modules';
+import { CYTOSCAPE_UI_EXTENSION_MODULES } from '@/lib/cytoscape-ui-extension-modules';
 
 // Register default layout statically (always needed)
 cytoscape.use(fcose);
@@ -329,7 +329,7 @@ export function GraphCanvas() {
     const cy = cyInstance;
     if (!cy) return;
 
-    const cleanupUiExtensions = attachUiExtensions(cy, CYTOSCAPE_OVERLAYS_API, {
+    const cleanupUiExtensions = attachUiExtensions(cy, {
       navigatorContainer: '#nq-graph-navigator',
     });
 

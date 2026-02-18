@@ -14,12 +14,7 @@ export interface UiExtensionModules {
   navigator: unknown;
   autopanOnDrag: unknown;
   noOverlap: unknown;
-  overlays: unknown;
   popper: PopperModule;
-}
-
-export interface OverlaysApiLike {
-  renderBar: (accessor: ((node: any) => number) | string, options?: Record<string, unknown>) => unknown;
 }
 
 export interface UiExtensionAttachOptions {
@@ -67,14 +62,12 @@ export function registerUiExtensions(cytoscapeModule: CytoscapeLike, modules: Ui
   cytoscapeModule.use(modules.autopanOnDrag);
   cytoscapeModule.use(modules.noOverlap);
   cytoscapeModule.use(modules.popper(createFloatingUiPopperFactory()));
-  cytoscapeModule.use(modules.overlays);
 
   registered = true;
 }
 
 export function attachUiExtensions(
   cy: Core,
-  overlaysApi?: OverlaysApiLike,
   options: UiExtensionAttachOptions = {}
 ): () => void {
   const cleanupFns: Array<() => void> = [];
@@ -117,40 +110,6 @@ export function attachUiExtensions(
   if (typeof (cy as any).on === 'function' && typeof (cy as any).off === 'function') {
     cy.on('add', 'node', reapplyNoOverlap);
     cleanupFns.push(() => cy.off('add', 'node', reapplyNoOverlap));
-  }
-
-  const overlaysFactory = (cy as any).overlays;
-  if (typeof overlaysFactory === 'function' && overlaysApi && typeof overlaysApi.renderBar === 'function') {
-    const overlayHandle = overlaysFactory.call(
-      cy,
-      [
-        {
-          position: 'top',
-          height: 4,
-          vis: overlaysApi.renderBar(
-            (node: any) => {
-              const raw = node.data('txCount');
-              const txCount = Number(raw);
-              return Number.isFinite(txCount) && txCount > 0 ? txCount : 0;
-            },
-            {
-              backgroundColor: '#8B8BF5',
-              borderColor: '#FAF4F0',
-            }
-          ),
-        },
-      ],
-      {
-        backgroundColor: 'transparent',
-        padding: 2,
-        updateOn: 'render',
-        selector: 'node[txCount > 0]',
-      }
-    );
-
-    if (overlayHandle && typeof overlayHandle.remove === 'function') {
-      cleanupFns.push(() => overlayHandle.remove());
-    }
   }
 
   return () => {

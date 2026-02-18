@@ -1,4 +1,4 @@
-import neo4j, { type Driver, type ManagedTransaction, type Integer, type DateTime } from 'neo4j-driver';
+import neo4j, { type Driver, type ManagedTransaction, type Integer, type DateTime, type QueryResult } from 'neo4j-driver';
 import { config } from './config';
 
 let driver: Driver | undefined;
@@ -43,6 +43,20 @@ export async function writeTx<T>(work: (tx: ManagedTransaction) => Promise<T>): 
   const session = getDriver().session();
   try {
     return await session.executeWrite(work);
+  } finally {
+    await session.close();
+  }
+}
+
+/**
+ * Execute a query in auto-commit (implicit) transaction mode.
+ * Required for queries using CALL {} IN TRANSACTIONS (batched writes),
+ * which cannot run inside executeRead/executeWrite managed transactions.
+ */
+export async function runAutoCommit(query: string, params?: Record<string, unknown>): Promise<QueryResult> {
+  const session = getDriver().session();
+  try {
+    return await session.run(query, params);
   } finally {
     await session.close();
   }

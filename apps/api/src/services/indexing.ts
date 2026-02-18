@@ -1,5 +1,5 @@
 import neo4j from 'neo4j-driver';
-import { readTx, writeTx, toNumber } from '../lib/neo4j';
+import { readTx, writeTx, runAutoCommit, toNumber } from '../lib/neo4j';
 import { getNimiqService, type TransactionData } from './nimiq-rpc';
 import { addressCache } from '../lib/address-cache';
 import { jobTracker } from '../lib/job-tracker';
@@ -195,25 +195,29 @@ export async function updateEdgeAggregatesForPairs(
  * Intended for full backfill completion when per-batch aggregate updates are deferred.
  */
 export async function rebuildAllEdgeAggregates(): Promise<void> {
-  await writeTx(async (tx) => {
-    await tx.run(
-      `MATCH (a:Address)-[t:TRANSACTION]->(b:Address)
-       WITH a, b, count(t) AS cnt, sum(toInteger(t.value)) AS total,
-            min(t.timestamp) AS firstTx, max(t.timestamp) AS lastTx
+  // Batched: uses CALL {} IN TRANSACTIONS to avoid loading entire graph in one tx.
+  // Requires auto-commit mode (cannot run inside executeWrite).
+  await runAutoCommit(
+    `MATCH (a:Address)-[t:TRANSACTION]->(b:Address)
+     WITH a, b, count(t) AS cnt, sum(toInteger(t.value)) AS total,
+          min(t.timestamp) AS firstTx, max(t.timestamp) AS lastTx
+     CALL {
+       WITH a, b, cnt, total, firstTx, lastTx
        MERGE (a)-[r:TRANSACTED_WITH]->(b)
        SET r.txCount = cnt, r.totalValue = toString(total),
-           r.firstTxAt = firstTx, r.lastTxAt = lastTx`
-    );
-  });
+           r.firstTxAt = firstTx, r.lastTxAt = lastTx
+     } IN TRANSACTIONS OF 10000 ROWS`
+  );
 
-  await writeTx(async (tx) => {
-    await tx.run(
-      `MATCH (a:Address)
-       OPTIONAL MATCH (a)-[t:TRANSACTION]-()
-       WITH a, count(DISTINCT t) AS cnt
-       SET a.txCount = cnt`
-    );
-  });
+  await runAutoCommit(
+    `MATCH (a:Address)
+     OPTIONAL MATCH (a)-[t:TRANSACTION]-()
+     WITH a, count(DISTINCT t) AS cnt
+     CALL {
+       WITH a, cnt
+       SET a.txCount = cnt
+     } IN TRANSACTIONS OF 10000 ROWS`
+  );
 }
 
 /**
@@ -381,18 +385,22 @@ export async function runIndexing(formattedAddr: string, isIncremental: boolean)
  * Run after backfill completes and on every startup as self-healing.
  */
 export async function markBackfilledAddressesComplete(): Promise<number> {
-  const result = await writeTx(async (tx) => {
-    const res = await tx.run(
-      `MATCH (a:Address)
-       WHERE a.indexStatus IS NULL
-         AND EXISTS { (a)-[:TRANSACTION]-() }
+  // Batched: uses CALL {} IN TRANSACTIONS to avoid a single large write tx
+  // when 100K+ addresses need updating after a full backfill.
+  const res = await runAutoCommit(
+    `MATCH (a:Address)
+     WHERE a.indexStatus IS NULL
+       AND EXISTS { (a)-[:TRANSACTION]-() }
+     WITH a, $now AS now
+     CALL {
+       WITH a, now
        SET a.indexStatus = 'COMPLETE',
-           a.indexedAt = $now
-       RETURN count(a) AS updated`,
-      { now: new Date().toISOString() }
-    );
-    return toNumber(res.records[0]?.get('updated')) || 0;
-  });
+           a.indexedAt = now
+     } IN TRANSACTIONS OF 10000 ROWS
+     RETURN count(a) AS updated`,
+    { now: new Date().toISOString() }
+  );
+  const result = toNumber(res.records[0]?.get('updated')) || 0;
   if (result > 0) console.log(`[backfill] Marked ${result} addresses as COMPLETE`);
   return result;
 }
