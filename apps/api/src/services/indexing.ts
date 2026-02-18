@@ -377,6 +377,27 @@ export async function runIndexing(formattedAddr: string, isIncremental: boolean)
 }
 
 /**
+ * Mark all backfilled addresses (have TRANSACTION relationships but no indexStatus) as COMPLETE.
+ * Run after backfill completes and on every startup as self-healing.
+ */
+export async function markBackfilledAddressesComplete(): Promise<number> {
+  const result = await writeTx(async (tx) => {
+    const res = await tx.run(
+      `MATCH (a:Address)
+       WHERE a.indexStatus IS NULL
+         AND EXISTS { (a)-[:TRANSACTION]-() }
+       SET a.indexStatus = 'COMPLETE',
+           a.indexedAt = $now
+       RETURN count(a) AS updated`,
+      { now: new Date().toISOString() }
+    );
+    return toNumber(res.records[0]?.get('updated')) || 0;
+  });
+  if (result > 0) console.log(`[backfill] Marked ${result} addresses as COMPLETE`);
+  return result;
+}
+
+/**
  * Get the current index status of an address from Neo4j.
  */
 export async function getIndexStatus(address: string): Promise<string | null> {

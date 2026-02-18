@@ -1,6 +1,6 @@
 import type { Block, Subscription } from '@albermonte/nimiq-rpc-client-ts'
 import { ensureRpcClient, getRpcClient, mapTransaction } from './rpc-client'
-import { rebuildAllEdgeAggregates, writeTransactionBatch, updateEdgeAggregatesForPairs } from './indexing'
+import { rebuildAllEdgeAggregates, writeTransactionBatch, updateEdgeAggregatesForPairs, markBackfilledAddressesComplete } from './indexing'
 import { readTx, writeTx } from '../lib/neo4j'
 import { config } from '../lib/config'
 
@@ -306,6 +306,7 @@ async function runBackfill(): Promise<void> {
   }
 
   await setLastProcessedBatch(state.lastProcessedBatch)
+  await markBackfilledAddressesComplete()
   console.log(`[backfill] Complete — processed up to batch ${state.lastProcessedBatch}`)
 }
 
@@ -406,6 +407,11 @@ export function startBlockchainIndexer(): { stop: () => Promise<void> } {
   state.running = true
 
   console.log('[indexer] Starting blockchain indexer...')
+
+  // Mark any backfilled addresses missing indexStatus (self-healing)
+  markBackfilledAddressesComplete().catch((err) => {
+    console.error('[indexer] Failed to mark backfilled addresses:', err)
+  })
 
   // Start live subscription immediately (don't wait for backfill)
   startLiveSubscription().catch((err) => {
