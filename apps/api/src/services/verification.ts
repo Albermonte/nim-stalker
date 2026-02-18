@@ -1,3 +1,4 @@
+import neo4j from 'neo4j-driver'
 import { readTx, toNumber } from '../lib/neo4j'
 import { getRpcClient } from './rpc-client'
 
@@ -177,7 +178,7 @@ export async function verifyBackfillIntegrity(sampleSize = 10): Promise<Verifica
        MATCH (a)-[t:TRANSACTION]->(b)
        WITH a.id AS fromId, b.id AS toId, r.txCount AS aggCount, count(t) AS realCount
        RETURN fromId, toId, aggCount, realCount`,
-      { limit: aggregateSampleSize }
+      { limit: neo4j.int(aggregateSampleSize) }
     )
 
     return sampleResult.records.map((r) => {
