@@ -1,4 +1,4 @@
-import type { Block, Subscription } from '@albermonte/nimiq-rpc-client-ts'
+import { type Block, type Subscription, BlockType } from '@albermonte/nimiq-rpc-client-ts'
 import { ensureRpcClient, getRpcClient, mapTransaction } from './rpc-client'
 import { rebuildAllEdgeAggregates, writeTransactionBatch, updateEdgeAggregatesForPairs, markBackfilledAddressesComplete } from './indexing'
 import { readTx, writeTx } from '../lib/neo4j'
@@ -11,6 +11,7 @@ interface IndexerState {
   liveSubscriptionActive: boolean
   totalTransactionsIndexed: number
   running: boolean
+  backfillComplete: boolean
 }
 
 const state: IndexerState = {
@@ -18,6 +19,7 @@ const state: IndexerState = {
   liveSubscriptionActive: false,
   totalTransactionsIndexed: 0,
   running: false,
+  backfillComplete: false,
 }
 
 let subscription: Subscription<Block> | null = null
@@ -307,6 +309,7 @@ async function runBackfill(): Promise<void> {
 
   await setLastProcessedBatch(state.lastProcessedBatch)
   await markBackfilledAddressesComplete()
+  state.backfillComplete = true
   console.log(`[backfill] Complete — processed up to batch ${state.lastProcessedBatch}`)
 }
 
@@ -339,6 +342,17 @@ async function startLiveSubscription(): Promise<void> {
 
       const block = response.data
       const transactions = block.transactions ?? []
+
+      // Track batch progress from macro blocks (each macro block closes a batch)
+      if (block.type === BlockType.Macro && state.backfillComplete) {
+        const completedBatch = block.batch - 1
+        if (completedBatch > state.lastProcessedBatch) {
+          state.lastProcessedBatch = completedBatch
+          await setLastProcessedBatch(completedBatch).catch((err) => {
+            console.error('[live] Failed to persist batch checkpoint:', err)
+          })
+        }
+      }
 
       if (transactions.length === 0) return
 
