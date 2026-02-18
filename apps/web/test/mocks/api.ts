@@ -9,14 +9,11 @@ import type {
   GraphResponse,
   PathResponse,
   SubgraphResponse,
-  IndexingJob,
 } from '@nim-stalker/shared';
 
 export interface MockApiClient {
   getAddress: ReturnType<typeof mock>;
   getTransactions: ReturnType<typeof mock>;
-  indexAddress: ReturnType<typeof mock>;
-  getJobs: ReturnType<typeof mock>;
   expandGraph: ReturnType<typeof mock>;
   findPath: ReturnType<typeof mock>;
   findSubgraph: ReturnType<typeof mock>;
@@ -31,8 +28,6 @@ export function createMockApiClient(): MockApiClient {
   return {
     getAddress: mock(() => Promise.resolve(null)),
     getTransactions: mock(() => Promise.resolve({ transactions: [], total: 0 })),
-    indexAddress: mock(() => Promise.resolve({ status: 'INDEXING', address: '' })),
-    getJobs: mock(() => Promise.resolve({ jobs: [] })),
     expandGraph: mock(() => Promise.resolve({ nodes: [], edges: [] })),
     findPath: mock(() => Promise.resolve({ found: false })),
     findSubgraph: mock(() => Promise.resolve({ found: false })),

@@ -2,16 +2,13 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { toast } from 'sonner';
 import {
-  IndexStatus,
   type CytoscapeNode,
   type CytoscapeEdge,
   type Direction,
   type FilterState,
   type NodeData,
-  type IndexingJob,
 } from '@nim-stalker/shared';
-import { api, JobWebSocket } from '@/lib/api';
-import { getApiBaseUrl } from '@/lib/api-url';
+import { api } from '@/lib/api';
 import { formatNimiqAddress, truncateAddress } from '@/lib/format-utils';
 
 /** Layout mode for the graph visualization */
@@ -59,8 +56,6 @@ interface GraphState {
   };
   /** Layout mode for graph visualization */
   layoutMode: LayoutMode;
-  /** Addresses currently being indexed (for overlay feedback) */
-  indexingAddresses: Set<string>;
   /** When true, loadInitialData() is skipped (deep link pages set this) */
   skipInitialLoad: boolean;
 }
@@ -76,7 +71,6 @@ interface GraphActions {
   setFilters: (filters: Partial<FilterState>) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
-  indexNode: (id: string) => Promise<void>;
   expandNode: (id: string, direction: Direction) => Promise<void>;
   searchAddress: (address: string) => Promise<void>;
   addAddress: (address: string) => Promise<void>;
@@ -124,108 +118,8 @@ const initialState: GraphState = {
     stats: null,
   },
   layoutMode: 'fcose',
-  indexingAddresses: new Set(),
   skipInitialLoad: false,
 };
-
-const POLL_INTERVAL_MS = 2000;
-const POLL_TIMEOUT_MS = 120_000;
-
-// Shared WebSocket connection for job status updates
-let jobWs: JobWebSocket | null = null;
-const jobListeners = new Map<string, (job: IndexingJob) => void>();
-
-function getJobWebSocket(): JobWebSocket {
-  if (jobWs) return jobWs;
-  const API_URL = getApiBaseUrl();
-  jobWs = new JobWebSocket(API_URL, {
-    onSnapshot: () => {
-      // Snapshot is informational; individual listeners track specific addresses
-    },
-    onJobUpdate: (job) => {
-      const listener = jobListeners.get(job.address);
-      if (listener) listener(job);
-    },
-  });
-  return jobWs;
-}
-
-/**
- * Wait for a job to complete using WebSocket (real-time) with HTTP polling fallback.
- * Returns the final job status, or null if the job was never found.
- */
-export async function _pollJobUntilDone(
-  address: string,
-  options?: { timeoutMs?: number; pollIntervalMs?: number }
-): Promise<IndexingJob | null> {
-  const ws = getJobWebSocket();
-  const timeoutMs = options?.timeoutMs ?? POLL_TIMEOUT_MS;
-  const pollIntervalMs = options?.pollIntervalMs ?? POLL_INTERVAL_MS;
-  const startedAt = new Date().toISOString();
-
-  return new Promise<IndexingJob | null>((resolve) => {
-    let resolved = false;
-    let pollTimer: ReturnType<typeof setTimeout> | null = null;
-    let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const cleanup = () => {
-      resolved = true;
-      jobListeners.delete(address);
-      if (pollTimer) clearTimeout(pollTimer);
-      if (timeoutTimer) clearTimeout(timeoutTimer);
-    };
-
-    // WebSocket listener for this address
-    jobListeners.set(address, (job) => {
-      if (resolved) return;
-      if (job.status === 'COMPLETE' || job.status === 'ERROR') {
-        cleanup();
-        resolve(job);
-      }
-    });
-
-    // Fallback polling in case WebSocket is disconnected
-    const poll = async () => {
-      if (resolved) return;
-      try {
-        const { jobs } = await api.getJobs();
-        const job = jobs.find((j) => j.address === address);
-        if (!job) { cleanup(); resolve(null); return; }
-        if (job.status === 'COMPLETE' || job.status === 'ERROR') {
-          cleanup();
-          resolve(job);
-          return;
-        }
-      } catch {
-        // Network error — retry
-      }
-      if (!resolved) {
-        // Poll less frequently when WebSocket is connected
-        const interval = ws.connected ? pollIntervalMs * 5 : pollIntervalMs;
-        pollTimer = setTimeout(poll, interval);
-      }
-    };
-
-    timeoutTimer = setTimeout(() => {
-      if (resolved) return;
-      cleanup();
-      resolve({
-        address,
-        status: 'ERROR',
-        startedAt,
-        completedAt: new Date().toISOString(),
-        indexed: 0,
-        incremental: false,
-        error: `Timed out waiting for indexing job after ${timeoutMs}ms`,
-      });
-    }, timeoutMs);
-
-    // Start first poll after a delay (give WebSocket a chance).
-    // Always do an initial poll at the base interval so we don't stall waiting
-    // for WebSocket updates that may never arrive.
-    pollTimer = setTimeout(poll, pollIntervalMs);
-  });
-}
 
 export const useGraphStore = create<GraphState & GraphActions>()(
   immer((set, get) => ({
@@ -341,65 +235,6 @@ export const useGraphStore = create<GraphState & GraphActions>()(
       });
     },
 
-    indexNode: async (id) => {
-      const requestKey = `index:${id}`;
-      const { nodes, updateNode, setError, inFlightRequests } = get();
-
-      // Skip if already in progress
-      if (inFlightRequests.has(requestKey)) {
-        return;
-      }
-
-      const node = nodes.get(id);
-
-      // Only index if the node exists and is PENDING
-      if (!node || node.data.indexStatus !== IndexStatus.PENDING) return;
-
-      // Mark request as in-flight and track indexing address
-      const newInFlight = new Set(inFlightRequests);
-      newInFlight.add(requestKey);
-      const newIndexing = new Set(get().indexingAddresses);
-      newIndexing.add(id);
-      set({ inFlightRequests: newInFlight, indexingAddresses: newIndexing });
-
-      // Mark as indexing
-      updateNode(id, { indexStatus: IndexStatus.INDEXING });
-
-      try {
-        // Trigger background indexing (returns immediately)
-        await api.indexAddress(id);
-
-        // Poll until done
-        const job = await _pollJobUntilDone(id);
-
-        if (job?.status === 'ERROR') {
-          throw new Error(job.error || 'Indexing failed');
-        }
-
-        // Fetch updated address data (includes txCount)
-        const addressData = await api.getAddress(id);
-
-        // Update node with fresh data
-        updateNode(id, {
-          type: addressData.type as NodeData['type'],
-          balance: addressData.balance,
-          indexStatus: addressData.indexStatus as NodeData['indexStatus'],
-          txCount: addressData.txCount,
-        });
-      } catch (err) {
-        updateNode(id, { indexStatus: IndexStatus.ERROR });
-        setError(err instanceof Error ? err.message : 'Failed to index address');
-      } finally {
-        // Remove from in-flight and indexing tracking
-        const current = get().inFlightRequests;
-        const newSet = new Set(current);
-        newSet.delete(requestKey);
-        const currentIndexing = new Set(get().indexingAddresses);
-        currentIndexing.delete(id);
-        set({ inFlightRequests: newSet, indexingAddresses: currentIndexing });
-      }
-    },
-
     expandNode: async (id, direction) => {
       const requestKey = `expand:${id}:${direction}`;
       const { filters, addGraphData, setLoading, setError, inFlightRequests } = get();
@@ -450,24 +285,10 @@ export const useGraphStore = create<GraphState & GraphActions>()(
       setLoading(true);
       setError(null);
 
-      // Track indexing address for overlay feedback
       const formattedAddress = formatNimiqAddress(address);
-      const newIndexing = new Set(get().indexingAddresses);
-      newIndexing.add(formattedAddress);
-      set({ indexingAddresses: newIndexing });
 
       try {
-        // Trigger background indexing (returns immediately)
-        await api.indexAddress(address);
-
-        // Poll until indexing completes
-        const job = await _pollJobUntilDone(formattedAddress);
-
-        if (job?.status === 'ERROR') {
-          throw new Error(job.error || 'Indexing failed');
-        }
-
-        // Then expand from it
+        // Expand from the address (data comes from batch/live indexing)
         const result = await api.expandGraph([address], 'both', filters);
 
         // Clear existing graph before adding new results
@@ -489,13 +310,11 @@ export const useGraphStore = create<GraphState & GraphActions>()(
         setError(err instanceof Error ? err.message : 'Failed to search address');
       } finally {
         setLoading(false);
-        // Remove from in-flight and indexing tracking
+        // Remove from in-flight
         const current = get().inFlightRequests;
         const newSet = new Set(current);
         newSet.delete(requestKey);
-        const currentIndexing = new Set(get().indexingAddresses);
-        currentIndexing.delete(formattedAddress);
-        set({ inFlightRequests: newSet, indexingAddresses: currentIndexing });
+        set({ inFlightRequests: newSet });
       }
     },
 
@@ -715,7 +534,7 @@ export const useGraphStore = create<GraphState & GraphActions>()(
 
     expandAllNodes: async () => {
       const requestKey = 'expand-all';
-      const { nodes, filters, addGraphData, setLoading, setError, inFlightRequests, indexNode } = get();
+      const { nodes, filters, addGraphData, setLoading, setError, inFlightRequests } = get();
 
       if (nodes.size === 0 || inFlightRequests.has(requestKey)) return;
 
@@ -724,16 +543,6 @@ export const useGraphStore = create<GraphState & GraphActions>()(
       setError(null);
 
       try {
-        // Phase 1: Index any PENDING nodes first
-        const pendingIds = Array.from(nodes.values())
-          .filter(n => n.data.indexStatus === IndexStatus.PENDING)
-          .map(n => n.data.id);
-
-        if (pendingIds.length > 0) {
-          await Promise.all(pendingIds.map(id => indexNode(id)));
-        }
-
-        // Phase 2: Expand all nodes
         const allIds = Array.from(nodes.keys());
         const BATCH_SIZE = 50;
         const allNodes: CytoscapeNode[] = [];

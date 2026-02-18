@@ -19,7 +19,7 @@ const INDEX_STATUS_STYLES: Record<string, string> = {
 };
 
 function DetailsPanelInner() {
-  const { selectedNodeId, selectedEdgeId, nodes, edges, expandNode, indexNode, loading } = useGraphStore();
+  const { selectedNodeId, selectedEdgeId, nodes, edges, expandNode, loading } = useGraphStore();
 
   const selectedNode = selectedNodeId ? nodes.get(selectedNodeId) : null;
   const selectedEdge = selectedEdgeId ? edges.get(selectedEdgeId) : null;
@@ -90,15 +90,6 @@ function DetailsPanelInner() {
             <div className="nq-divider"></div>
 
             <div className="space-y-2">
-              {data.indexStatus === 'PENDING' && (
-                <button
-                  onClick={() => indexNode(data.id)}
-                  disabled={loading}
-                  className="nq-btn-periwinkle w-full text-xs py-2"
-                >
-                  Index Address
-                </button>
-              )}
               <button
                 onClick={() => expandNode(data.id, 'both')}
                 disabled={loading}

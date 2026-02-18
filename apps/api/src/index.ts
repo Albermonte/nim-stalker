@@ -6,7 +6,6 @@ import { getAddressLabelService } from './lib/address-labels';
 import { healthRoutes } from './routes/health';
 import { addressRoutes } from './routes/address';
 import { graphRoutes } from './routes/graph';
-import { jobsRoutes } from './routes/jobs';
 import { transactionRoutes } from './routes/transaction';
 import { indexerRoutes } from './routes/indexer';
 import { startBlockchainIndexer } from './services/blockchain-indexer';
@@ -32,7 +31,6 @@ const app = new Elysia()
   .use(healthRoutes)
   .use(addressRoutes)
   .use(graphRoutes)
-  .use(jobsRoutes)
   .use(transactionRoutes)
   .use(indexerRoutes)
   .get('/', () => ({

@@ -1,7 +1,5 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test';
 import { validAddresses } from '../test/fixtures/addresses';
-import { formatAddress } from '../lib/address-utils';
-import { _resetSensitiveRateLimiter } from '../lib/security';
 
 process.env.NODE_ENV = 'test';
 process.env.NEO4J_URI = 'bolt://localhost:7687';
@@ -38,25 +36,6 @@ mock.module('../lib/address-cache', () => ({
     get: mock(() => null),
     set: mock(() => {}),
     invalidate: mock(() => {}),
-  },
-}));
-
-// Mock job-tracker
-const mockStartJob = mock(() => {});
-const mockHasJob = mock(() => false);
-const mockCompleteJob = mock(() => {});
-const mockFailJob = mock(() => {});
-const mockUpdateProgress = mock(() => {});
-const mockGetJobs = mock(() => []);
-
-mock.module('../lib/job-tracker', () => ({
-  jobTracker: {
-    startJob: mockStartJob,
-    hasJob: mockHasJob,
-    completeJob: mockCompleteJob,
-    failJob: mockFailJob,
-    updateProgress: mockUpdateProgress,
-    getJobs: mockGetJobs,
   },
 }));
 
@@ -124,110 +103,3 @@ describe('GET /address/:addr/transactions', () => {
   });
 });
 
-describe('POST /address/:addr/index', () => {
-  beforeEach(() => {
-    process.env.NODE_ENV = 'test';
-    process.env.API_KEY = 'secret-key';
-    process.env.SENSITIVE_RATE_LIMIT_PER_WINDOW = '100';
-    process.env.SENSITIVE_RATE_LIMIT_MAIN_ORIGIN_PER_WINDOW = '1000';
-
-    mockRun.mockClear();
-    mockGetAccount.mockClear();
-    mockGetTransactionsByAddress.mockClear();
-    mockStartJob.mockClear();
-    mockHasJob.mockClear();
-    mockCompleteJob.mockClear();
-    mockFailJob.mockClear();
-    mockUpdateProgress.mockClear();
-    // Default: writeTx succeeds
-    mockRun.mockImplementation(() => Promise.resolve({ records: [] }));
-    mockHasJob.mockImplementation(() => false);
-    _resetSensitiveRateLimiter();
-  });
-
-  test('returns INDEXING status immediately (fire-and-forget)', async () => {
-    const response = await app.handle(
-      new Request(`http://localhost/address/${encodeURIComponent(validAddresses.basic)}/index`, {
-        method: 'POST',
-      })
-    );
-
-    expect(response.status).toBe(200);
-    const body = await response.json();
-    expect(body.status).toBe('INDEXING');
-    expect(body.address).toBe(formatAddress(validAddresses.basic));
-  });
-
-  test('registers job via jobTracker.startJob', async () => {
-    await app.handle(
-      new Request(`http://localhost/address/${encodeURIComponent(validAddresses.basic)}/index`, {
-        method: 'POST',
-      })
-    );
-
-    expect(mockStartJob).toHaveBeenCalledTimes(1);
-    expect(mockStartJob).toHaveBeenCalledWith(formatAddress(validAddresses.basic), false);
-  });
-
-  test('returns 409 when job already in progress', async () => {
-    mockHasJob.mockImplementation(() => true);
-
-    const response = await app.handle(
-      new Request(`http://localhost/address/${encodeURIComponent(validAddresses.basic)}/index`, {
-        method: 'POST',
-      })
-    );
-
-    expect(response.status).toBe(409);
-    const body = await response.json();
-    expect(body.error).toBe('Indexing already in progress');
-  });
-
-  test('returns 400 for invalid address', async () => {
-    const response = await app.handle(
-      new Request('http://localhost/address/invalid-address/index', {
-        method: 'POST',
-      })
-    );
-
-    expect(response.status).toBe(400);
-    const body = await response.json();
-    expect(body).toHaveProperty('error');
-  });
-
-  test('returns 401 in production for non-main origin without API key', async () => {
-    process.env.NODE_ENV = 'production';
-
-    const response = await app.handle(
-      new Request(`http://localhost/address/${encodeURIComponent(validAddresses.basic)}/index`, {
-        method: 'POST',
-        headers: {
-          origin: 'https://example.com',
-          'x-forwarded-for': '198.51.100.10',
-        },
-      })
-    );
-
-    expect(response.status).toBe(401);
-    const body = await response.json();
-    expect(body.error).toBe('Unauthorized');
-  });
-
-  test('allows production request from localhost origin without API key', async () => {
-    process.env.NODE_ENV = 'production';
-
-    const response = await app.handle(
-      new Request(`http://localhost/address/${encodeURIComponent(validAddresses.basic)}/index`, {
-        method: 'POST',
-        headers: {
-          origin: 'http://localhost:3000',
-          'x-forwarded-for': '198.51.100.11',
-        },
-      })
-    );
-
-    expect(response.status).toBe(200);
-    const body = await response.json();
-    expect(body.status).toBe('INDEXING');
-  });
-});

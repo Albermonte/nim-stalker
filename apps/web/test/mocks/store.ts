@@ -50,7 +50,6 @@ export interface MockGraphStore {
   setSelectedNode: ReturnType<typeof mock>;
   setSelectedEdge: ReturnType<typeof mock>;
   expandNode: ReturnType<typeof mock>;
-  indexNode: ReturnType<typeof mock>;
   searchAddress: ReturnType<typeof mock>;
   addAddress: ReturnType<typeof mock>;
   clearGraph: ReturnType<typeof mock>;
@@ -110,7 +109,6 @@ export function createMockStore(overrides: Partial<MockGraphStore> = {}): MockGr
     setSelectedNode: mock(() => {}),
     setSelectedEdge: mock(() => {}),
     expandNode: mock(() => Promise.resolve()),
-    indexNode: mock(() => Promise.resolve()),
     searchAddress: mock(() => Promise.resolve()),
     addAddress: mock(() => Promise.resolve()),
     clearGraph: mock(() => {}),

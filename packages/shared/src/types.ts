@@ -116,17 +116,6 @@ export interface PaginatedResponse<T> {
   hasMore: boolean;
 }
 
-// Indexing job status (for job tracker)
-export interface IndexingJob {
-  address: string;
-  status: 'INDEXING' | 'COMPLETE' | 'ERROR';
-  startedAt: string;
-  completedAt?: string;
-  indexed: number;
-  error?: string;
-  incremental: boolean;
-}
-
 // Subgraph response (all paths within max hops)
 export interface SubgraphResponse {
   found: boolean;

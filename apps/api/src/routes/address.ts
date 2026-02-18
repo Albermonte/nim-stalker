@@ -6,9 +6,7 @@ import { isValidNimiqAddress, formatAddress } from '../lib/address-utils';
 import { getAddressLabelService } from '../lib/address-labels';
 import { addressCache } from '../lib/address-cache';
 import { AddressType } from '@nim-stalker/shared';
-import { jobTracker } from '../lib/job-tracker';
-import { runIndexing, mapAccountType } from '../services/indexing';
-import { enforceSensitiveEndpointPolicy } from '../lib/security';
+import { mapAccountType } from '../services/indexing';
 
 export const addressRoutes = new Elysia({ prefix: '/address' })
   // GET /address/:addr - Get address metadata
@@ -249,60 +247,6 @@ export const addressRoutes = new Elysia({ prefix: '/address' })
         maxTimestamp: t.Optional(t.Number()),
         minValue: t.Optional(t.String()),
         maxValue: t.Optional(t.String()),
-      }),
-    }
-  )
-  // POST /address/:addr/index - Trigger background indexing for an address
-  .post(
-    '/:addr/index',
-    async ({ params, set, request }) => {
-      const policyError = enforceSensitiveEndpointPolicy(request, set, 'address-index');
-      if (policyError) {
-        return policyError;
-      }
-
-      const { addr } = params;
-
-      if (!isValidNimiqAddress(addr)) {
-        set.status = 400;
-        return { error: 'Invalid Nimiq address format' };
-      }
-
-      const formattedAddr = formatAddress(addr);
-
-      // Prevent duplicate concurrent indexing for the same address
-      if (jobTracker.hasJob(formattedAddr)) {
-        set.status = 409;
-        return { error: 'Indexing already in progress', status: 'INDEXING', address: formattedAddr };
-      }
-
-      // Check current index status for incremental mode
-      const currentStatus = await readTx(async (tx) => {
-        const result = await tx.run(
-          `MATCH (a:Address {id: $id}) RETURN a.indexStatus AS status`,
-          { id: formattedAddr }
-        );
-        return result.records.length > 0 ? result.records[0].get('status') as string | null : null;
-      });
-
-      const isIncremental = currentStatus === 'COMPLETE';
-
-      // Register the job and return immediately
-      jobTracker.startJob(formattedAddr, isIncremental);
-
-      // Fire-and-forget: run indexing in the background
-      runIndexing(formattedAddr, isIncremental).catch((error) => {
-        console.error('[POST /address/:addr/index] Background indexing failed:', {
-          address: formattedAddr,
-          error: error instanceof Error ? error.message : error,
-        });
-      });
-
-      return { status: 'INDEXING', address: formattedAddr };
-    },
-    {
-      params: t.Object({
-        addr: t.String(),
       }),
     }
   );

@@ -45,23 +45,13 @@ async function getLastProcessedBatch(): Promise<number> {
   })
 }
 
-async function setLastProcessedBatch(batch: number): Promise<void> {
+async function persistCheckpoint(batch: number, totalIndexedDelta: number): Promise<void> {
   await writeTx(async (tx) => {
     await tx.run(
       `MERGE (m:Meta {key: $key})
-       SET m.lastProcessedBatch = $batch, m.updatedAt = $now`,
-      { key: META_KEY, batch, now: new Date().toISOString() }
-    )
-  })
-}
-
-async function incrementTotalIndexed(count: number): Promise<void> {
-  await writeTx(async (tx) => {
-    await tx.run(
-      `MERGE (m:Meta {key: $key})
-       ON CREATE SET m.totalTransactionsIndexed = $count
-       ON MATCH SET m.totalTransactionsIndexed = coalesce(m.totalTransactionsIndexed, 0) + $count`,
-      { key: META_KEY, count }
+       SET m.lastProcessedBatch = $batch, m.updatedAt = $now,
+           m.totalTransactionsIndexed = coalesce(m.totalTransactionsIndexed, 0) + $delta`,
+      { key: META_KEY, batch, now: new Date().toISOString(), delta: totalIndexedDelta }
     )
   })
 }
@@ -238,11 +228,14 @@ async function runBackfill(): Promise<void> {
 
   const backfillStartMs = Date.now()
   let aggregateRebuildNeeded = false
+  let pendingIndexedDelta = 0
+  let consecutiveErrors = 0
 
   for (let batch = startBatch; batch <= currentBatch; batch++) {
     if (!state.running) {
       if (state.lastProcessedBatch >= startBatch) {
-        await setLastProcessedBatch(state.lastProcessedBatch)
+        await persistCheckpoint(state.lastProcessedBatch, pendingIndexedDelta)
+        pendingIndexedDelta = 0
       }
       console.log('[backfill] Stopped')
       return
@@ -264,10 +257,11 @@ async function runBackfill(): Promise<void> {
             await updateEdgeAggregatesForPairs(pairs)
           }
           state.totalTransactionsIndexed += writeResult.count
-          await incrementTotalIndexed(writeResult.count)
+          pendingIndexedDelta += writeResult.count
         }
       }
 
+      consecutiveErrors = 0
       state.lastProcessedBatch = batch
       const shouldPersist = shouldPersistBackfillCheckpoint(
         batch,
@@ -277,7 +271,8 @@ async function runBackfill(): Promise<void> {
       )
       const isFinalBatch = batch === currentBatch
       if (shouldPersist && (!isFinalBatch || !tuning.deferAggregates)) {
-        await setLastProcessedBatch(batch)
+        await persistCheckpoint(batch, pendingIndexedDelta)
+        pendingIndexedDelta = 0
       }
 
       if (batch % 100 === 0) {
@@ -293,9 +288,13 @@ async function runBackfill(): Promise<void> {
         await new Promise((r) => setTimeout(r, tuning.throttleMs))
       }
     } catch (error) {
-      console.error(`[backfill] Error processing batch ${batch}:`, error instanceof Error ? error.message : error)
-      // Wait before retrying
-      await new Promise((r) => setTimeout(r, 5000))
+      consecutiveErrors++
+      const msg = error instanceof Error ? error.message : String(error)
+      console.error(`[backfill] Error processing batch ${batch}:`, msg)
+      // Exponential backoff: 5s, 10s, 20s, 40s, capped at 60s
+      const delay = Math.min(5000 * 2 ** (consecutiveErrors - 1), 60_000)
+      console.log(`[backfill] Retrying in ${delay / 1000}s (attempt ${consecutiveErrors})`)
+      await new Promise((r) => setTimeout(r, delay))
       // Retry same batch
       batch--
     }
@@ -307,7 +306,8 @@ async function runBackfill(): Promise<void> {
     console.log('[backfill] Aggregate rebuild complete')
   }
 
-  await setLastProcessedBatch(state.lastProcessedBatch)
+  await persistCheckpoint(state.lastProcessedBatch, pendingIndexedDelta)
+  pendingIndexedDelta = 0
   await markBackfilledAddressesComplete()
   state.backfillComplete = true
   console.log(`[backfill] Complete — processed up to batch ${state.lastProcessedBatch}`)
@@ -348,7 +348,7 @@ async function startLiveSubscription(): Promise<void> {
         const completedBatch = block.batch - 1
         if (completedBatch > state.lastProcessedBatch) {
           state.lastProcessedBatch = completedBatch
-          await setLastProcessedBatch(completedBatch).catch((err) => {
+          await persistCheckpoint(completedBatch, 0).catch((err) => {
             console.error('[live] Failed to persist batch checkpoint:', err)
           })
         }
@@ -364,7 +364,7 @@ async function startLiveSubscription(): Promise<void> {
           const pairs = extractPairs(txs)
           await updateEdgeAggregatesForPairs(pairs)
           state.totalTransactionsIndexed += writeResult.count
-          await incrementTotalIndexed(writeResult.count)
+          await persistCheckpoint(state.lastProcessedBatch, writeResult.count)
         }
 
         console.log(`[live] Block #${block.number}: ${writeResult.count} transactions indexed`)
@@ -427,18 +427,13 @@ export function startBlockchainIndexer(): { stop: () => Promise<void> } {
     console.error('[indexer] Failed to mark backfilled addresses:', err)
   })
 
-  // Start live subscription immediately (don't wait for backfill)
-  startLiveSubscription().catch((err) => {
-    console.error('[indexer] Live subscription startup failed:', err)
-  })
-
-  // Start backfill in background with retry
+  // Backfill first, then start live subscription to avoid concurrent write pressure
   ;(async () => {
     const maxAttempts = 3
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         await runBackfill()
-        return
+        break
       } catch (err) {
         console.error(`[indexer] Backfill failed (attempt ${attempt}/${maxAttempts}):`, err)
         if (attempt < maxAttempts && state.running) {
@@ -447,6 +442,13 @@ export function startBlockchainIndexer(): { stop: () => Promise<void> } {
           await new Promise(r => setTimeout(r, delay))
         }
       }
+    }
+
+    // Start live subscription only after backfill finishes (or exhausts retries)
+    if (state.running) {
+      startLiveSubscription().catch((err) => {
+        console.error('[indexer] Live subscription startup failed:', err)
+      })
     }
   })()
 

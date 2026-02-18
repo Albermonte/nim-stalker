@@ -3,7 +3,6 @@ import { getGraphService } from '../services/graph';
 import { getPathFinder } from '../services/path-finder';
 import { getSubgraphFinder } from '../services/subgraph-finder';
 import { getNimiqService } from '../services/nimiq-rpc';
-import { ensureAddressIndexed } from '../services/indexing';
 import { isValidNimiqAddress, formatAddress, truncateAddress } from '../lib/address-utils';
 import { getAddressLabelService } from '../lib/address-labels';
 import { poolAll } from '../lib/concurrency';
@@ -164,35 +163,8 @@ export const graphRoutes = new Elysia({ prefix: '/graph' })
       }
 
       try {
-        // Ensure from/to addresses are indexed before searching
-        await Promise.all([
-          ensureAddressIndexed(fromFormatted),
-          ensureAddressIndexed(toFormatted),
-        ]);
-
         const subgraphFinder = getSubgraphFinder();
-        let result = await subgraphFinder.findSubgraph(fromFormatted, toFormatted, maxHops, directed);
-
-        // If a path was found, check for unindexed intermediate nodes and index them
-        if (result.found && result.subgraph) {
-          const unindexedNodes = result.subgraph.nodes.filter(
-            (n) => n.data.indexStatus !== 'COMPLETE'
-              && n.data.id !== fromFormatted
-              && n.data.id !== toFormatted
-          );
-
-          if (unindexedNodes.length > 0) {
-            console.log(`[subgraph] Indexing ${unindexedNodes.length} intermediate nodes`);
-            const indexTasks = unindexedNodes.map(
-              (n) => () => ensureAddressIndexed(n.data.id)
-            );
-            await poolAll(indexTasks, 3);
-
-            // Re-run subgraph search with newly indexed data for richer results
-            result = await subgraphFinder.findSubgraph(fromFormatted, toFormatted, maxHops, directed);
-          }
-        }
-
+        const result = await subgraphFinder.findSubgraph(fromFormatted, toFormatted, maxHops, directed);
         return result;
       } catch (error) {
         console.error('[GET /graph/subgraph] Failed to find subgraph:', {

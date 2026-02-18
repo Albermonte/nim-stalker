@@ -9,7 +9,6 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { formatDate, formatNimiq } from '@/lib/format-utils';
 import { addressToUrlSlug, buildAddressHashUrl } from '@/lib/url-utils';
-import { _pollJobUntilDone } from '@/store/graph-store';
 import { computeTxTimelinePositions } from '@/lib/tx-timeline-layout';
 
 type TxRow = {
@@ -77,13 +76,12 @@ export function TxTimeline(props: { address: string; direction: Direction; limit
   const { address, direction, limit } = props;
   const router = useRouter();
   const [cyInstance, setCyInstance] = useState<Core | null>(null);
-  const [phase, setPhase] = useState<'loading' | 'indexing' | 'ready' | 'error'>('loading');
+  const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
   const [txs, setTxs] = useState<TxRow[]>([]);
-  const [indexedAtLeastOnce, setIndexedAtLeastOnce] = useState(false);
   const runIdRef = useRef(0);
 
-  const runLoad = useCallback(async (options?: { skipIndexing?: boolean }) => {
+  const runLoad = useCallback(async () => {
     const runId = ++runIdRef.current;
     const safeSet = (fn: () => void) => {
       if (runId !== runIdRef.current) return;
@@ -97,28 +95,6 @@ export function TxTimeline(props: { address: string; direction: Direction; limit
     });
 
     try {
-      if (!options?.skipIndexing) {
-        const meta = await api.getAddress(address);
-        if (meta.indexStatus !== 'COMPLETE') {
-          safeSet(() => setPhase('indexing'));
-          try {
-            await api.indexAddress(address);
-          } catch (err) {
-            // If already indexing, just wait for completion.
-            if (!(err instanceof Error) || !/already in progress/i.test(err.message)) {
-              throw err;
-            }
-          }
-
-          const job = await _pollJobUntilDone(address);
-          if (job?.status === 'ERROR') {
-            throw new Error(job.error || 'Indexing failed');
-          }
-        }
-
-        safeSet(() => setIndexedAtLeastOnce(true));
-      }
-
       const collected: TxRow[] = [];
       const pageSize = 100;
       let page = 1;
@@ -143,7 +119,7 @@ export function TxTimeline(props: { address: string; direction: Direction; limit
 
   useEffect(() => {
     void runLoad();
-    // Reset any previous indexing skip / attempt flags when address changes.
+    // Cancel previous load when address changes.
     return () => {
       runIdRef.current += 1;
     };
@@ -244,11 +220,6 @@ export function TxTimeline(props: { address: string; direction: Direction; limit
             <div className="text-xs uppercase tracking-wide opacity-80">
               {direction} · limit {limit}
             </div>
-            {phase === 'indexing' && (
-              <div className="mt-2 text-xs font-bold uppercase tracking-wide text-nq-pink">
-                Indexing…
-              </div>
-            )}
             {phase === 'loading' && (
               <div className="mt-2 text-xs font-bold uppercase tracking-wide text-nq-periwinkle">
                 Loading…
@@ -269,14 +240,6 @@ export function TxTimeline(props: { address: string; direction: Direction; limit
                 <button onClick={() => void runLoad()} className="nq-btn-white w-full text-xs">
                   Retry
                 </button>
-                <button onClick={() => void runLoad({ skipIndexing: true })} className="nq-btn-periwinkle w-full text-xs">
-                  Try Fetch Anyway
-                </button>
-                {!indexedAtLeastOnce && (
-                  <div className="text-[10px] opacity-80">
-                    Tip: indexing can take a while for large accounts.
-                  </div>
-                )}
               </div>
             </div>
           )}

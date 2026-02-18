@@ -4,7 +4,7 @@ import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
 import CytoscapeComponent from 'react-cytoscapejs';
 import cytoscape, { Core } from 'cytoscape';
 import fcose from 'cytoscape-fcose';
-import { IndexStatus, type CytoscapeNode, type CytoscapeEdge, type NodeData } from '@nim-stalker/shared';
+import { type CytoscapeNode, type CytoscapeEdge, type NodeData } from '@nim-stalker/shared';
 import { useGraphStore } from '@/store/graph-store';
 import { NodeContextMenu } from './NodeContextMenu';
 import { bindCyEvents } from './graph-events';
@@ -298,8 +298,6 @@ export function GraphCanvas() {
   const clearLastExpanded = useGraphStore((state) => state.clearLastExpanded);
   const loadInitialData = useGraphStore((state) => state.loadInitialData);
   const layoutMode = useGraphStore((state) => state.layoutMode);
-  const indexingAddresses = useGraphStore((state) => state.indexingAddresses);
-
   // Memoize array conversion to avoid creating new arrays every render
   const nodes = useMemo(() => Array.from(nodesMap.values()), [nodesMap]);
   const edges = useMemo(() => Array.from(edgesMap.values()), [edgesMap]);
@@ -349,12 +347,7 @@ export function GraphCanvas() {
       },
       onDblTapNode: async (evt) => {
         const nodeId = evt.target.id();
-        const state = useGraphStore.getState();
-        const node = state.nodes.get(nodeId);
-        if (node && node.data.indexStatus === IndexStatus.PENDING) {
-          await state.indexNode(nodeId);
-        }
-        await state.expandNode(nodeId, 'both');
+        await useGraphStore.getState().expandNode(nodeId, 'both');
       },
       onMouseOverNode: (evt) => {
         const container = cy.container();
@@ -1057,17 +1050,6 @@ export function GraphCanvas() {
         className="absolute bottom-4 left-4 z-30 h-32 w-32 bg-nq-white border-2 border-nq-black shadow-[4px_4px_0_0_#000000] overflow-hidden pointer-events-auto"
       />
       <NodeContextMenu cyRef={cyRef} containerRef={containerRef} />
-
-      {/* Indexing overlay */}
-      {indexingAddresses.size > 0 && (
-        <div className="absolute inset-0 flex items-center justify-center z-40 pointer-events-none">
-          <div className="nq-card text-center pointer-events-auto">
-            <div className="text-nq-pink font-bold uppercase tracking-wider nq-pulse">
-              Indexing address...
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Tooltip - NQ style */}
       <NodeTooltip

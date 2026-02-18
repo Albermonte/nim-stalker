@@ -74,15 +74,6 @@ class TestableApiClient {
     return result;
   }
 
-  async indexAddress(address: string) {
-    const result = await this.fetch<{ indexed: number; status: string }>(
-      `/address/${encodeURIComponent(address)}/index`,
-      { method: 'POST' }
-    );
-    this.invalidateCache(address);
-    return result;
-  }
-
   async expandGraph(addresses: string[], direction = 'both') {
     return this.fetch('/graph/expand', {
       method: 'POST',
@@ -277,22 +268,6 @@ describe('ApiClient', () => {
       expect(mockFetch).toHaveBeenCalledTimes(3); // Initial 2 + refetch of ADDR1
     });
 
-    test('indexAddress invalidates cache for address', async () => {
-      mockFetch.mockImplementation(() =>
-        Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ indexed: 10, status: 'COMPLETE' }),
-        })
-      );
-
-      // First cache something
-      await api.getAddress('NQ42TEST');
-      expect(api.cacheSize).toBe(1);
-
-      // Index should invalidate
-      await api.indexAddress('NQ42TEST');
-      expect(api.cacheSize).toBe(0);
-    });
   });
 
   describe('getAddress', () => {
@@ -309,24 +284,6 @@ describe('ApiClient', () => {
       expect(mockFetch).toHaveBeenCalledWith(
         'http://localhost:3001/address/NQ42%20TEST%20ADDR',
         expect.any(Object)
-      );
-    });
-  });
-
-  describe('indexAddress', () => {
-    test('uses POST method', async () => {
-      mockFetch.mockImplementation(() =>
-        Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ indexed: 5, status: 'COMPLETE' }),
-        })
-      );
-
-      await api.indexAddress('NQ42TEST');
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining('/index'),
-        expect.objectContaining({ method: 'POST' })
       );
     });
   });

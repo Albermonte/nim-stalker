@@ -2,7 +2,6 @@ import type {
   GraphResponse,
   PathResponse,
   SubgraphResponse,
-  IndexingJob,
   Direction,
   FilterState,
 } from '@nim-stalker/shared';
@@ -32,7 +31,6 @@ interface CacheEntry<T> {
 const ENDPOINT_TTL: Record<string, number> = {
   '/graph/': 60_000,      // Graph data: 60s
   '/graph/latest': 5_000, // Latest blocks: 5s
-  '/jobs': 2_000,         // Jobs: 2s
   '/address/': 30_000,    // Address data: 30s (default)
 };
 const MAX_CACHE_ENTRIES = 2_000;
@@ -232,20 +230,6 @@ export class ApiClient {
     }>(`/address/${encodeURIComponent(address)}/transactions${query ? `?${query}` : ''}`);
   }
 
-  async indexAddress(address: string) {
-    const result = await this.fetch<{ status: string; address: string }>(
-      `/address/${encodeURIComponent(address)}/index`,
-      { method: 'POST' }
-    );
-    // Clear cached data for this address since indexing was triggered
-    this.invalidateCache(address);
-    return result;
-  }
-
-  async getJobs(): Promise<{ jobs: IndexingJob[] }> {
-    return this.fetch('/jobs');
-  }
-
   async expandGraph(
     addresses: string[],
     direction: Direction = 'both',
@@ -318,88 +302,3 @@ export class ApiClient {
 }
 
 export const api = new ApiClient(API_URL);
-
-/**
- * WebSocket client for real-time job status updates.
- * Falls back to HTTP polling if WebSocket fails to connect.
- */
-type JobMessage =
-  | { type: 'snapshot'; jobs: IndexingJob[] }
-  | { type: 'job-update'; job: IndexingJob };
-
-export class JobWebSocket {
-  private ws: WebSocket | null = null;
-  private reconnectMs = 1000;
-  private maxReconnectMs = 30000;
-  private disposed = false;
-  private onUpdate: ((jobs: IndexingJob[]) => void) | null = null;
-  private onJobChange: ((job: IndexingJob) => void) | null = null;
-
-  constructor(
-    private baseUrl: string,
-    handlers: {
-      onSnapshot: (jobs: IndexingJob[]) => void;
-      onJobUpdate: (job: IndexingJob) => void;
-    },
-  ) {
-    this.onUpdate = handlers.onSnapshot;
-    this.onJobChange = handlers.onJobUpdate;
-    this.connect();
-  }
-
-  private connect(): void {
-    if (this.disposed) return;
-
-    const wsUrl = this.baseUrl.replace(/^http/, 'ws') + '/jobs/ws';
-    try {
-      this.ws = new WebSocket(wsUrl);
-    } catch {
-      this.scheduleReconnect();
-      return;
-    }
-
-    this.ws.onopen = () => {
-      this.reconnectMs = 1000; // Reset backoff on successful connection
-    };
-
-    this.ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data) as JobMessage;
-        if (msg.type === 'snapshot') {
-          this.onUpdate?.(msg.jobs);
-        } else if (msg.type === 'job-update') {
-          this.onJobChange?.(msg.job);
-        }
-      } catch {
-        // Ignore malformed messages
-      }
-    };
-
-    this.ws.onclose = () => {
-      this.ws = null;
-      this.scheduleReconnect();
-    };
-
-    this.ws.onerror = () => {
-      this.ws?.close();
-    };
-  }
-
-  private scheduleReconnect(): void {
-    if (this.disposed) return;
-    setTimeout(() => this.connect(), this.reconnectMs);
-    this.reconnectMs = Math.min(this.reconnectMs * 2, this.maxReconnectMs);
-  }
-
-  get connected(): boolean {
-    return this.ws?.readyState === WebSocket.OPEN;
-  }
-
-  dispose(): void {
-    this.disposed = true;
-    this.ws?.close();
-    this.ws = null;
-    this.onUpdate = null;
-    this.onJobChange = null;
-  }
-}

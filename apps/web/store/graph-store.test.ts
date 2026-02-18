@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterAll, mock } from 'bun:test';
-import { IndexStatus, type CytoscapeNode, type CytoscapeEdge } from '@nim-stalker/shared';
+import { type CytoscapeNode, type CytoscapeEdge } from '@nim-stalker/shared';
 
 // Mock sonner before importing the store
 mock.module('sonner', () => ({
@@ -11,8 +11,6 @@ mock.module('sonner', () => ({
 
 // Mock the API module
 const mockApi = {
-  indexAddress: mock(() => Promise.resolve({ status: 'INDEXING', address: 'TEST' })),
-  getJobs: mock(() => Promise.resolve({ jobs: [{ address: 'TEST', status: 'COMPLETE', startedAt: new Date().toISOString(), indexed: 10, incremental: false }] })),
   getAddress: mock(() =>
     Promise.resolve({
       id: 'NQ42 TEST ADDR',
@@ -92,17 +90,10 @@ describe('graph-store', () => {
     });
 
     // Reset mocks
-    mockApi.indexAddress.mockClear();
-    mockApi.getJobs.mockClear();
     mockApi.getAddress.mockClear();
     mockApi.expandGraph.mockClear();
     mockApi.findSubgraph.mockClear();
     mockApi.getLatestBlocksGraph.mockClear();
-
-    // Default: getJobs returns completed job
-    mockApi.getJobs.mockImplementation(() =>
-      Promise.resolve({ jobs: [{ address: 'TEST', status: 'COMPLETE', startedAt: new Date().toISOString(), indexed: 10, incremental: false }] })
-    );
   });
 
   describe('addNodes', () => {
@@ -443,60 +434,7 @@ describe('graph-store', () => {
     });
   });
 
-  describe('inFlightRequests', () => {
-    test('prevents duplicate concurrent indexNode calls', async () => {
-      const { addNodes, indexNode } = useGraphStore.getState();
-
-      // Add a node that needs indexing
-      addNodes([
-        { data: { id: 'TEST', type: 'BASIC', balance: '0', indexStatus: IndexStatus.PENDING } },
-      ]);
-
-      // Make the API call slow but still return the fire-and-forget response
-      mockApi.indexAddress.mockImplementation(
-        () => new Promise((resolve) => setTimeout(() => resolve({ status: 'INDEXING', address: 'TEST' }), 100))
-      );
-
-      // Start two concurrent index requests
-      const promise1 = indexNode('TEST');
-      const promise2 = indexNode('TEST');
-
-      await Promise.all([promise1, promise2]);
-
-      // Should only call API once
-      expect(mockApi.indexAddress).toHaveBeenCalledTimes(1);
-    });
-  });
-
   describe('async actions', () => {
-    test('indexNode updates node status through lifecycle', async () => {
-      const { addNodes, indexNode } = useGraphStore.getState();
-
-      addNodes([
-        { data: { id: 'TEST', type: 'UNKNOWN', balance: '0', indexStatus: IndexStatus.PENDING } },
-      ]);
-
-      await indexNode('TEST');
-
-      const state = useGraphStore.getState();
-      const node = state.nodes.get('TEST');
-      expect(node?.data.indexStatus).toBe('COMPLETE');
-      expect(node?.data.type).toBe('BASIC');
-    });
-
-    test('indexNode skips non-PENDING nodes', async () => {
-      const { addNodes, indexNode } = useGraphStore.getState();
-
-      addNodes([
-        { data: { id: 'TEST', type: 'BASIC', balance: '1000', indexStatus: IndexStatus.COMPLETE } },
-      ]);
-
-      await indexNode('TEST');
-
-      // Should not call API
-      expect(mockApi.indexAddress).not.toHaveBeenCalled();
-    });
-
     test('expandNode adds new nodes and edges', async () => {
       const { addNodes, expandNode } = useGraphStore.getState();
 

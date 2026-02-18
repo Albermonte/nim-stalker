@@ -92,23 +92,23 @@ describe('security policy', () => {
 
     expect(
       enforceSensitiveEndpointPolicy(
-        new Request('http://localhost:3001/address/NQ42/index', { headers }),
+        new Request('http://localhost:3001/graph/subgraph', { headers }),
         setA,
-        'address-index',
+        'graph-subgraph',
       ),
     ).toBeNull();
     expect(
       enforceSensitiveEndpointPolicy(
-        new Request('http://localhost:3001/address/NQ42/index', { headers }),
+        new Request('http://localhost:3001/graph/subgraph', { headers }),
         setB,
-        'address-index',
+        'graph-subgraph',
       ),
     ).toBeNull();
 
     const third = enforceSensitiveEndpointPolicy(
-      new Request('http://localhost:3001/address/NQ42/index', { headers }),
+      new Request('http://localhost:3001/graph/subgraph', { headers }),
       setC,
-      'address-index',
+      'graph-subgraph',
     );
 
     expect(setC.status).toBe(429);

@@ -12,7 +12,7 @@ export function getDriver(): Driver {
       config.neo4jUri,
       neo4j.auth.basic(config.neo4jUser, config.neo4jPassword),
       {
-        maxConnectionPoolSize: 30,
+        maxConnectionPoolSize: 10,
         connectionAcquisitionTimeout: 30_000,
         logging: {
           level: config.nodeEnv === 'development' ? 'warn' : 'error',
