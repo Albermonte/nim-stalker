@@ -27,6 +27,7 @@ const state: IndexerState = {
 
 let subscription: Subscription<Block> | null = null
 let indexerDb: IndexerDb | null = null
+let blockProcessingChain = Promise.resolve()
 
 interface BackfillTuning {
   checkpointInterval: number
@@ -232,6 +233,9 @@ async function runBackfill(): Promise<void> {
   // Migrate from Neo4j Meta node on first run
   await migrateFromNeo4jMeta(db)
 
+  // Self-healing: mark backfilled addresses from prior runs
+  await markBackfilledAddressesComplete()
+
   state.lastProcessedBatch = db.getLastIndexedBatch()
   let currentBatch = await waitForRpc()
 
@@ -401,49 +405,19 @@ async function startLiveSubscription(): Promise<void> {
       },
     })
 
-    subscription.next(async (response) => {
+    subscription.next((response) => {
       if (response.error) {
         console.error('[live] Stream error:', response.error.message)
         return
       }
 
       const block = response.data
-      const transactions = block.transactions ?? []
 
-      // When a macro block closes a batch, verify all transactions are indexed
-      if (block.type === BlockType.Macro && state.backfillComplete && indexerDb) {
-        const completedBatch = block.batch - 1
-        if (completedBatch > state.lastProcessedBatch) {
-          verifyBatch(completedBatch, client).catch((err) => {
-            console.warn(
-              `[live] Batch ${completedBatch} verification failed:`,
-              err instanceof Error ? err.message : err
-            )
-          })
-        }
-      }
-
-      if (transactions.length === 0) return
-
-      try {
-        const txs = transactions.map(mapTransaction)
-        const writeResult = await writeTransactionBatch(txs)
-
-        if (writeResult.count > 0) {
-          const pairs = extractPairs(txs)
-          await updateEdgeAggregatesForPairs(pairs)
-
-          // Best-effort concurrent balance fetching for live blocks
-          const uniqueAddresses = [...new Set(txs.flatMap(tx => [tx.from, tx.to]))]
-          fetchAndUpdateBalances(client, uniqueAddresses).catch((err) => {
-            console.warn('[live] Balance update failed:', err instanceof Error ? err.message : err)
-          })
-        }
-
-        console.log(`[live] Block #${block.number}: ${writeResult.count} transactions indexed`)
-      } catch (error) {
+      blockProcessingChain = blockProcessingChain.then(() =>
+        processLiveBlock(block, client)
+      ).catch((error) => {
         console.error(`[live] Error processing block #${block.number}:`, error instanceof Error ? error.message : error)
-      }
+      })
     })
 
     state.liveSubscriptionActive = true
@@ -452,6 +426,33 @@ async function startLiveSubscription(): Promise<void> {
     console.error('[live] Failed to start subscription:', error instanceof Error ? error.message : error)
     state.liveSubscriptionActive = false
   }
+}
+
+async function processLiveBlock(block: Block, client: ReturnType<typeof getRpcClient>): Promise<void> {
+  // When a macro block closes a batch, verify all transactions are indexed
+  if (block.type === BlockType.Macro && state.backfillComplete && indexerDb) {
+    const completedBatch = block.batch - 1
+    if (completedBatch > state.lastProcessedBatch) {
+      await verifyBatch(completedBatch, client)
+    }
+  }
+
+  const transactions = block.transactions ?? []
+  if (transactions.length === 0) return
+
+  const txs = transactions.map(mapTransaction)
+  const writeResult = await writeTransactionBatch(txs)
+
+  if (writeResult.count > 0) {
+    const pairs = extractPairs(txs)
+    await updateEdgeAggregatesForPairs(pairs)
+
+    // Balance updates — awaited to prevent concurrent pool pressure
+    const uniqueAddresses = [...new Set(txs.flatMap(tx => [tx.from, tx.to]))]
+    await fetchAndUpdateBalances(client, uniqueAddresses)
+  }
+
+  console.log(`[live] Block #${block.number}: ${writeResult.count} transactions indexed`)
 }
 
 async function fetchAndUpdateBalances(client: ReturnType<typeof getRpcClient>, addresses: string[]): Promise<void> {
@@ -603,11 +604,6 @@ export function startBlockchainIndexer(): { stop: () => Promise<void> } {
 
   console.log('[indexer] Starting blockchain indexer...')
 
-  // Mark any backfilled addresses missing indexStatus (self-healing)
-  markBackfilledAddressesComplete().catch((err) => {
-    console.error('[indexer] Failed to mark backfilled addresses:', err)
-  })
-
   // Backfill first, then start live subscription to avoid concurrent write pressure
   ;(async () => {
     const maxAttempts = 3
@@ -646,6 +642,7 @@ export function startBlockchainIndexer(): { stop: () => Promise<void> } {
         }
         subscription = null
       }
+      blockProcessingChain = Promise.resolve()
 
       if (indexerDb) {
         indexerDb.close()
