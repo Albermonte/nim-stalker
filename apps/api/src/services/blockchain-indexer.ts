@@ -410,12 +410,16 @@ async function startLiveSubscription(): Promise<void> {
       const block = response.data
       const transactions = block.transactions ?? []
 
-      // Track batch progress from macro blocks (each macro block closes a batch)
+      // When a macro block closes a batch, verify all transactions are indexed
       if (block.type === BlockType.Macro && state.backfillComplete && indexerDb) {
         const completedBatch = block.batch - 1
         if (completedBatch > state.lastProcessedBatch) {
-          indexerDb.markBatchIndexed(completedBatch, 0)
-          state.lastProcessedBatch = completedBatch
+          verifyBatch(completedBatch, client).catch((err) => {
+            console.warn(
+              `[live] Batch ${completedBatch} verification failed:`,
+              err instanceof Error ? err.message : err
+            )
+          })
         }
       }
 
@@ -470,6 +474,41 @@ async function fetchAndUpdateBalances(client: ReturnType<typeof getRpcClient>, a
   if (entries.length > 0) {
     await updateAddressBalances(entries)
   }
+}
+
+async function verifyBatch(batch: number, client: ReturnType<typeof getRpcClient>): Promise<void> {
+  try {
+    const result = await withTimeout(
+      client.blockchain.getTransactionsByBatchNumber(batch),
+      30_000,
+      `verifyBatch(${batch})`
+    )
+    const rawTxs = unwrap<any[]>(result)
+
+    if (rawTxs && rawTxs.length > 0) {
+      const txs = rawTxs.map(mapTransaction)
+      const writeResult = await writeTransactionBatch(txs)
+
+      if (writeResult.count > 0) {
+        const pairs = extractPairs(txs)
+        await updateEdgeAggregatesForPairs(pairs)
+        console.log(`[live] Batch ${batch} verified: ${writeResult.count} new transactions indexed`)
+      }
+
+      indexerDb!.markBatchIndexed(batch, rawTxs.length)
+    } else {
+      indexerDb!.markBatchIndexed(batch, 0)
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error)
+    if (isNotFoundError(msg)) {
+      indexerDb!.markBatchIndexed(batch, 0)
+      return
+    }
+    throw error
+  }
+
+  state.lastProcessedBatch = indexerDb!.getLastIndexedBatch()
 }
 
 // --- Public API ---
