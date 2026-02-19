@@ -4,6 +4,7 @@ import {
   formatEta,
   isConsensusEstablishedResponse,
   parseBackfillTuning,
+  parseGapRepairConfig,
   shouldPersistBackfillCheckpoint,
 } from './blockchain-indexer'
 
@@ -49,6 +50,53 @@ describe('parseBackfillTuning', () => {
       throttleEveryBatches: 5,
       throttleMs: 20,
       deferAggregates: false,
+    })
+  })
+})
+
+describe('parseGapRepairConfig', () => {
+  test('uses defaults when env variables are absent', () => {
+    const config = parseGapRepairConfig({})
+
+    expect(config).toEqual({
+      intervalMs: 300_000,
+      maxPerCycle: 50,
+    })
+  })
+
+  test('parses valid values', () => {
+    const config = parseGapRepairConfig({
+      GAP_REPAIR_INTERVAL_MS: '60000',
+      GAP_REPAIR_MAX_PER_CYCLE: '25',
+    })
+
+    expect(config).toEqual({
+      intervalMs: 60_000,
+      maxPerCycle: 25,
+    })
+  })
+
+  test('falls back to defaults for invalid values', () => {
+    const config = parseGapRepairConfig({
+      GAP_REPAIR_INTERVAL_MS: '-1',
+      GAP_REPAIR_MAX_PER_CYCLE: '0',
+    })
+
+    expect(config).toEqual({
+      intervalMs: 300_000,
+      maxPerCycle: 50,
+    })
+  })
+
+  test('falls back to defaults for non-numeric values', () => {
+    const config = parseGapRepairConfig({
+      GAP_REPAIR_INTERVAL_MS: 'abc',
+      GAP_REPAIR_MAX_PER_CYCLE: '',
+    })
+
+    expect(config).toEqual({
+      intervalMs: 300_000,
+      maxPerCycle: 50,
     })
   })
 })

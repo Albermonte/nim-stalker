@@ -15,6 +15,8 @@ interface IndexerState {
   running: boolean
   backfillComplete: boolean
   skippedBatches: number[]
+  lastGapScanAt: number
+  gapRepairsCompleted: number
 }
 
 const state: IndexerState = {
@@ -23,6 +25,8 @@ const state: IndexerState = {
   running: false,
   backfillComplete: false,
   skippedBatches: [],
+  lastGapScanAt: 0,
+  gapRepairsCompleted: 0,
 }
 
 let subscription: Subscription<Block> | null = null
@@ -68,6 +72,18 @@ export function parseBackfillTuning(env: Record<string, string | undefined>): Ba
     throttleMs: parseNonNegativeInt(env.BACKFILL_THROTTLE_MS, 0),
     throttleEveryBatches: parsePositiveInt(env.BACKFILL_THROTTLE_EVERY_BATCHES, 10),
     deferAggregates: parseBoolean(env.BACKFILL_DEFER_AGGREGATES, true),
+  }
+}
+
+interface GapRepairConfig {
+  intervalMs: number
+  maxPerCycle: number
+}
+
+export function parseGapRepairConfig(env: Record<string, string | undefined>): GapRepairConfig {
+  return {
+    intervalMs: parsePositiveInt(env.GAP_REPAIR_INTERVAL_MS, 300_000), // 5 min
+    maxPerCycle: parsePositiveInt(env.GAP_REPAIR_MAX_PER_CYCLE, 50),
   }
 }
 
@@ -347,24 +363,61 @@ async function runBackfill(): Promise<void> {
     }
   }
 
-  // Check for new batches that arrived during backfill
-  try {
-    const latestResult = await withTimeout(
-      client.blockchain.getBatchNumber(),
-      15_000,
-      'getBatchNumber'
-    )
-    const latestBatch = unwrap<number>(latestResult)
-    if (latestBatch > currentBatch) {
+  // Process trailing batches that arrived during backfill
+  let caughtUp = false
+  while (state.running && !caughtUp) {
+    try {
+      const latestResult = await withTimeout(
+        client.blockchain.getBatchNumber(),
+        15_000,
+        'getBatchNumber'
+      )
+      const latestBatch = unwrap<number>(latestResult)
       const newGaps = db.getUnindexedBatches(currentBatch + 1, latestBatch)
-      if (newGaps.length > 0) {
-        console.log(`[backfill] ${newGaps.length} new batches arrived during backfill, continuing...`)
-        // Recursively process new gaps (backfill will be called again by startBlockchainIndexer retry loop)
-        currentBatch = latestBatch
+      if (newGaps.length === 0) {
+        caughtUp = true
+        break
       }
+      console.log(`[backfill] ${newGaps.length} new batches arrived during backfill, processing...`)
+      for (const batch of newGaps) {
+        if (!state.running) break
+        try {
+          const result = await withTimeout(
+            client.blockchain.getTransactionsByBatchNumber(batch),
+            30_000,
+            `getTransactionsByBatchNumber(${batch})`
+          )
+          const rawTxs = unwrap<any[]>(result)
+          if (rawTxs && rawTxs.length > 0) {
+            const txs = rawTxs.map(mapTransaction)
+            const writeResult = await writeTransactionBatch(txs)
+            if (writeResult.count > 0) {
+              if (tuning.deferAggregates) {
+                aggregateRebuildNeeded = true
+              } else {
+                const pairs = extractPairs(txs)
+                await updateEdgeAggregatesForPairs(pairs)
+              }
+            }
+            db.markBatchIndexed(batch, writeResult.count)
+          } else {
+            db.markBatchIndexed(batch, 0)
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          if (isNotFoundError(msg)) {
+            db.markBatchIndexed(batch, 0)
+          } else {
+            console.warn(`[backfill] Failed trailing batch ${batch}: ${msg}`)
+            // Leave unindexed — gap repair will handle it
+          }
+        }
+      }
+      currentBatch = latestBatch
+    } catch (err) {
+      console.warn('[backfill] Failed to check for newer batches:', err instanceof Error ? err.message : err)
+      caughtUp = true // Exit loop on RPC failure, gap repair will handle the rest
     }
-  } catch (err) {
-    console.warn('[backfill] Failed to check for newer batches:', err instanceof Error ? err.message : err)
   }
 
   if (tuning.deferAggregates && aggregateRebuildNeeded) {
@@ -433,8 +486,19 @@ async function processLiveBlock(block: Block, client: ReturnType<typeof getRpcCl
   if (block.type === BlockType.Macro && state.backfillComplete && indexerDb) {
     const completedBatch = block.batch - 1
     if (completedBatch > state.lastProcessedBatch) {
-      await verifyBatch(completedBatch, client)
+      // Fill transition gaps between last processed and completed batch
+      const transitionGaps = indexerDb.getUnindexedBatches(state.lastProcessedBatch + 1, completedBatch)
+      for (const gap of transitionGaps) {
+        try {
+          await verifyBatch(gap, client)
+        } catch (err) {
+          console.warn(`[live] Failed transition gap batch ${gap}: ${err instanceof Error ? err.message : err}`)
+        }
+      }
     }
+
+    // Periodic gap repair (internally throttled)
+    await repairGaps(client)
   }
 
   const transactions = block.transactions ?? []
@@ -512,6 +576,52 @@ async function verifyBatch(batch: number, client: ReturnType<typeof getRpcClient
   state.lastProcessedBatch = indexerDb!.getLastIndexedBatch()
 }
 
+async function repairGaps(client: ReturnType<typeof getRpcClient>): Promise<void> {
+  const db = indexerDb
+  if (!db || !state.running || !state.backfillComplete) return
+
+  const gapConfig = parseGapRepairConfig(process.env)
+
+  // Throttle: skip if last scan was too recent
+  if (Date.now() - state.lastGapScanAt < gapConfig.intervalMs) return
+
+  state.lastGapScanAt = Date.now()
+
+  let currentBatch: number
+  try {
+    const result = await withTimeout(
+      client.blockchain.getBatchNumber(),
+      15_000,
+      'getBatchNumber'
+    )
+    currentBatch = unwrap<number>(result)
+  } catch {
+    return // RPC unavailable, skip this cycle
+  }
+
+  const gaps = db.getUnindexedBatches(1, currentBatch)
+  if (gaps.length === 0) return
+
+  const toProcess = gaps.slice(0, gapConfig.maxPerCycle)
+  console.log(`[gap-repair] Found ${gaps.length} gaps, processing ${toProcess.length}...`)
+
+  let repaired = 0
+  for (const batch of toProcess) {
+    if (!state.running) break
+    try {
+      await verifyBatch(batch, client)
+      repaired++
+    } catch (err) {
+      console.warn(`[gap-repair] Failed batch ${batch}: ${err instanceof Error ? err.message : err}`)
+    }
+  }
+
+  state.gapRepairsCompleted += repaired
+  if (repaired > 0) {
+    console.log(`[gap-repair] Repaired ${repaired}/${toProcess.length} gaps (${gaps.length - repaired} remaining)`)
+  }
+}
+
 // --- Public API ---
 
 export async function getIndexerStatus() {
@@ -535,6 +645,8 @@ export async function getIndexerStatus() {
     running: state.running,
     backfillComplete: state.backfillComplete,
     skippedBatches: state.skippedBatches.length,
+    gapRepairsCompleted: state.gapRepairsCompleted,
+    lastGapScanAt: state.lastGapScanAt || null,
   }
 }
 
@@ -587,6 +699,8 @@ export async function getIndexerStatusWithProgress() {
     backfillComplete: state.backfillComplete,
     running: state.running,
     skippedBatches: state.skippedBatches.length,
+    gapRepairsCompleted: state.gapRepairsCompleted,
+    lastGapScanAt: state.lastGapScanAt || null,
   }
 }
 
@@ -650,6 +764,8 @@ export function startBlockchainIndexer(): { stop: () => Promise<void> } {
       }
 
       state.liveSubscriptionActive = false
+      state.lastGapScanAt = 0
+      state.gapRepairsCompleted = 0
       console.log('[indexer] Stopped')
     },
   }
