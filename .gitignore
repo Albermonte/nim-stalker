@@ -45,6 +45,7 @@ apps/api/prisma/*.db-journal
 # Nimiq
 nimiq-genesis-main-albatross.toml
 .data/
+data/
 
 # Misc
 *.tsbuildinfo

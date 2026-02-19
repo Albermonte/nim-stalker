@@ -176,6 +176,27 @@ export async function rebuildAllEdgeAggregates(): Promise<void> {
 }
 
 /**
+ * Update balances for a batch of addresses.
+ * Used by the live indexer to update address balances after processing a block.
+ */
+export async function updateAddressBalances(
+  entries: Array<{ address: string; balance: string }>
+): Promise<void> {
+  if (entries.length === 0) return;
+
+  for (const batch of chunk(entries, BATCH_SIZE)) {
+    await writeTx(async (tx) => {
+      await tx.run(
+        `UNWIND $entries AS entry
+         MATCH (a:Address {id: entry.address})
+         SET a.balance = entry.balance`,
+        { entries: batch.map(e => ({ address: e.address, balance: e.balance })) }
+      );
+    });
+  }
+}
+
+/**
  * Mark all backfilled addresses (have TRANSACTION relationships but no indexStatus) as COMPLETE.
  * Run after backfill completes and on every startup as self-healing.
  */

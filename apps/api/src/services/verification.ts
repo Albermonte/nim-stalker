@@ -1,8 +1,7 @@
 import neo4j from 'neo4j-driver'
 import { readTx, toNumber } from '../lib/neo4j'
-import { getRpcClient } from './rpc-client'
-
-const META_KEY = 'indexer'
+import { getRpcClient, unwrap } from './rpc-client'
+import { type IndexerDb } from '../lib/indexer-db'
 
 interface BatchSpotCheckDetail {
   batch: number
@@ -27,6 +26,8 @@ export interface VerificationResult {
     lastProcessedBatch: number
     currentBatch: number
     coveragePercent: string
+    indexedBatchCount: number
+    gapCount: number
     ok: boolean
   }
   transactionCount: {
@@ -54,14 +55,6 @@ export interface VerificationResult {
   issues: string[]
 }
 
-function unwrap<T>(result: { data?: T; error?: { code: number; message: string } }): T {
-  const { data, error } = result
-  if (error) {
-    throw new Error(error.message ?? 'RPC call failed')
-  }
-  return data as T
-}
-
 function pickRandomBatches(max: number, count: number): number[] {
   if (max < 1) return []
   const actual = Math.min(count, max)
@@ -72,31 +65,52 @@ function pickRandomBatches(max: number, count: number): number[] {
   return Array.from(picked).sort((a, b) => a - b)
 }
 
-export async function verifyBackfillIntegrity(sampleSize = 10): Promise<VerificationResult> {
+export async function verifyBackfillIntegrity(sampleSize = 10, indexerDb?: IndexerDb): Promise<VerificationResult> {
   const issues: string[] = []
   const client = getRpcClient()
 
-  // Check 1 — Batch coverage
-  const metaResult = await readTx(async (tx) => {
-    const result = await tx.run(
-      `MATCH (m:Meta {key: $key}) RETURN m.lastProcessedBatch AS batch, m.totalTransactionsIndexed AS total`,
-      { key: META_KEY }
-    )
-    if (result.records.length === 0) return { lastProcessedBatch: -1, metaTotal: 0 }
-    return {
-      lastProcessedBatch: toNumber(result.records[0].get('batch')),
-      metaTotal: toNumber(result.records[0].get('total')),
-    }
-  })
+  // Check 1 — Batch coverage (from SQLite if available, fallback to Neo4j Meta node)
+  let lastProcessedBatch: number
+  let sqliteTotal: number
+  let indexedBatchCount: number
+
+  if (indexerDb) {
+    lastProcessedBatch = indexerDb.getLastIndexedBatch()
+    sqliteTotal = indexerDb.getTotalTransactionsIndexed()
+    indexedBatchCount = indexerDb.getIndexedBatchCount()
+  } else {
+    // Fallback to Neo4j Meta node (pre-migration)
+    const metaResult = await readTx(async (tx) => {
+      const result = await tx.run(
+        `MATCH (m:Meta {key: $key}) RETURN m.lastProcessedBatch AS batch, m.totalTransactionsIndexed AS total`,
+        { key: 'indexer' }
+      )
+      if (result.records.length === 0) return { lastProcessedBatch: -1, metaTotal: 0 }
+      return {
+        lastProcessedBatch: toNumber(result.records[0].get('batch')),
+        metaTotal: toNumber(result.records[0].get('total')),
+      }
+    })
+    lastProcessedBatch = metaResult.lastProcessedBatch
+    sqliteTotal = metaResult.metaTotal
+    indexedBatchCount = lastProcessedBatch > 0 ? lastProcessedBatch : 0
+  }
 
   const currentBatch = unwrap<number>(await client.blockchain.getBatchNumber())
   const coveragePercent = currentBatch > 0
-    ? ((metaResult.lastProcessedBatch / currentBatch) * 100).toFixed(2)
+    ? ((lastProcessedBatch / currentBatch) * 100).toFixed(2)
     : '0'
-  const batchCoverageOk = metaResult.lastProcessedBatch >= currentBatch - 2
+  const batchCoverageOk = lastProcessedBatch >= currentBatch - 2
+
+  const gapCount = indexerDb
+    ? indexerDb.getUnindexedBatches(1, lastProcessedBatch).length
+    : 0
 
   if (!batchCoverageOk) {
-    issues.push(`Batch coverage gap: processed ${metaResult.lastProcessedBatch} of ${currentBatch} (${coveragePercent}%)`)
+    issues.push(`Batch coverage gap: processed ${lastProcessedBatch} of ${currentBatch} (${coveragePercent}%)`)
+  }
+  if (gapCount > 0) {
+    issues.push(`${gapCount} unindexed batches detected between 1 and ${lastProcessedBatch}`)
   }
 
   // Check 2 — Total transaction count
@@ -105,13 +119,13 @@ export async function verifyBackfillIntegrity(sampleSize = 10): Promise<Verifica
     return toNumber(result.records[0].get('cnt'))
   })
 
-  const txCountMatch = dbCount === metaResult.metaTotal
+  const txCountMatch = dbCount === sqliteTotal
   if (!txCountMatch) {
-    issues.push(`Transaction count mismatch: DB has ${dbCount}, Meta node says ${metaResult.metaTotal}`)
+    issues.push(`Transaction count mismatch: Neo4j has ${dbCount}, SQLite says ${sqliteTotal}`)
   }
 
   // Check 3 — Random batch spot-check
-  const batchesToCheck = pickRandomBatches(metaResult.lastProcessedBatch, sampleSize)
+  const batchesToCheck = pickRandomBatches(lastProcessedBatch, sampleSize)
   const spotCheckDetails: BatchSpotCheckDetail[] = []
 
   for (const batch of batchesToCheck) {
@@ -207,14 +221,16 @@ export async function verifyBackfillIntegrity(sampleSize = 10): Promise<Verifica
     status: issues.length === 0 ? 'ok' : 'issues_found',
     timestamp: new Date().toISOString(),
     batchCoverage: {
-      lastProcessedBatch: metaResult.lastProcessedBatch,
+      lastProcessedBatch,
       currentBatch,
       coveragePercent,
+      indexedBatchCount,
+      gapCount,
       ok: batchCoverageOk,
     },
     transactionCount: {
       dbCount,
-      metaCount: metaResult.metaTotal,
+      metaCount: sqliteTotal,
       match: txCountMatch,
     },
     batchSpotCheck: {

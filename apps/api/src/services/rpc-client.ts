@@ -29,6 +29,17 @@ export function getRpcClient(): NimiqRPCClient {
  * Convert a library Transaction to our internal TransactionData format.
  * Handles bigint timestamp → ms number, address formatting, etc.
  */
+/**
+ * Unwrap a CallResult, throwing on error.
+ */
+export function unwrap<T>(result: { data?: T; error?: { code: number; message: string } }): T {
+  const { data, error } = result
+  if (error) {
+    throw new Error(error.message ?? 'RPC call failed')
+  }
+  return data as T
+}
+
 export function mapTransaction(tx: RpcTransaction): TransactionData {
   return {
     hash: tx.hash,

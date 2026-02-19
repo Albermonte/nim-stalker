@@ -1,59 +1,38 @@
 import { type Block, type Subscription, BlockType } from '@albermonte/nimiq-rpc-client-ts'
-import { ensureRpcClient, getRpcClient, mapTransaction } from './rpc-client'
-import { rebuildAllEdgeAggregates, writeTransactionBatch, updateEdgeAggregatesForPairs, markBackfilledAddressesComplete } from './indexing'
-import { readTx, writeTx } from '../lib/neo4j'
+import { ensureRpcClient, getRpcClient, mapTransaction, unwrap } from './rpc-client'
+import { rebuildAllEdgeAggregates, writeTransactionBatch, updateEdgeAggregatesForPairs, markBackfilledAddressesComplete, updateAddressBalances } from './indexing'
+import { readTx } from '../lib/neo4j'
 import { config } from '../lib/config'
+import { openIndexerDb, type IndexerDb } from '../lib/indexer-db'
+import { withTimeout, poolAll } from '../lib/concurrency'
+import { formatAddress } from '../lib/address-utils'
 
-const META_KEY = 'indexer'
+const MAX_CONSECUTIVE_ERRORS = 10
 
 interface IndexerState {
   lastProcessedBatch: number
   liveSubscriptionActive: boolean
-  totalTransactionsIndexed: number
   running: boolean
   backfillComplete: boolean
+  skippedBatches: number[]
 }
 
 const state: IndexerState = {
   lastProcessedBatch: -1,
   liveSubscriptionActive: false,
-  totalTransactionsIndexed: 0,
   running: false,
   backfillComplete: false,
+  skippedBatches: [],
 }
 
 let subscription: Subscription<Block> | null = null
+let indexerDb: IndexerDb | null = null
 
 interface BackfillTuning {
   checkpointInterval: number
   throttleMs: number
   throttleEveryBatches: number
   deferAggregates: boolean
-}
-
-// --- Meta node helpers ---
-
-async function getLastProcessedBatch(): Promise<number> {
-  return readTx(async (tx) => {
-    const result = await tx.run(
-      `MATCH (m:Meta {key: $key}) RETURN m.lastProcessedBatch AS batch`,
-      { key: META_KEY }
-    )
-    if (result.records.length === 0) return -1
-    const val = result.records[0].get('batch')
-    return typeof val === 'number' ? val : Number(val)
-  })
-}
-
-async function persistCheckpoint(batch: number, totalIndexedDelta: number): Promise<void> {
-  await writeTx(async (tx) => {
-    await tx.run(
-      `MERGE (m:Meta {key: $key})
-       SET m.lastProcessedBatch = $batch, m.updatedAt = $now,
-           m.totalTransactionsIndexed = coalesce(m.totalTransactionsIndexed, 0) + $delta`,
-      { key: META_KEY, batch, now: new Date().toISOString(), delta: totalIndexedDelta }
-    )
-  })
 }
 
 // --- Helpers ---
@@ -94,12 +73,12 @@ export function parseBackfillTuning(env: Record<string, string | undefined>): Ba
 export function shouldPersistBackfillCheckpoint(
   batch: number,
   startBatch: number,
-  currentBatch: number,
+  endBatch: number,
   checkpointInterval: number
 ): boolean {
-  if (batch === currentBatch) return true
-  if (checkpointInterval <= 1) return true
-  return (batch - startBatch + 1) % checkpointInterval === 0
+  if (batch === endBatch) return true
+  const processed = batch - startBatch + 1
+  return processed % checkpointInterval === 0
 }
 
 export function estimateBackfillEtaMs(
@@ -128,12 +107,9 @@ export function formatEta(etaMs: number | null): string {
   return `${seconds}s`
 }
 
-function unwrap<T>(result: { data?: T; error?: { code: number; message: string } }): T {
-  const { data, error } = result
-  if (error) {
-    throw new Error(error.message ?? 'RPC call failed')
-  }
-  return data as T
+function isNotFoundError(msg: string): boolean {
+  const lower = msg.toLowerCase()
+  return lower.includes('not found') || lower.includes('does not exist')
 }
 
 // --- Consensus readiness ---
@@ -192,7 +168,11 @@ async function waitForRpc(maxRetries = 20, baseDelay = 3000): Promise<number> {
   const client = getRpcClient()
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const result = await client.blockchain.getBatchNumber()
+      const result = await withTimeout(
+        client.blockchain.getBatchNumber(),
+        15_000,
+        'getBatchNumber'
+      )
       return unwrap<number>(result)
     } catch (error) {
       const delay = Math.min(baseDelay * 2 ** (attempt - 1), 60_000)
@@ -204,45 +184,98 @@ async function waitForRpc(maxRetries = 20, baseDelay = 3000): Promise<number> {
   throw new Error('RPC readiness check exhausted') // unreachable
 }
 
+// --- Migration from Neo4j Meta node ---
+
+async function migrateFromNeo4jMeta(db: IndexerDb): Promise<void> {
+  if (db.getMeta('migrated_from_neo4j') === 'true') return
+  if (db.getLastIndexedBatch() >= 0) {
+    // SQLite already has data, skip migration
+    db.setMeta('migrated_from_neo4j', 'true')
+    return
+  }
+
+  const metaResult = await readTx(async (tx) => {
+    const result = await tx.run(
+      `MATCH (m:Meta {key: $key}) RETURN m.lastProcessedBatch AS batch`,
+      { key: 'indexer' }
+    )
+    if (result.records.length === 0) return -1
+    const val = result.records[0].get('batch')
+    return typeof val === 'number' ? val : Number(val)
+  })
+
+  if (metaResult > 0) {
+    console.log(`[migration] Migrating ${metaResult} batches from Neo4j Meta node to SQLite...`)
+    // Bulk insert in chunks to avoid overwhelming SQLite
+    const CHUNK_SIZE = 10_000
+    for (let start = 1; start <= metaResult; start += CHUNK_SIZE) {
+      const end = Math.min(start + CHUNK_SIZE - 1, metaResult)
+      for (let batch = start; batch <= end; batch++) {
+        db.markBatchIndexed(batch, 0) // tx_count unknown for historical batches
+      }
+    }
+    console.log(`[migration] Migration complete — ${metaResult} batches marked in SQLite`)
+  }
+
+  db.setMeta('migrated_from_neo4j', 'true')
+}
+
 // --- Backfill worker ---
 
 async function runBackfill(): Promise<void> {
   await waitForConsensus()
 
   const tuning = parseBackfillTuning(process.env)
-  state.lastProcessedBatch = await getLastProcessedBatch()
-  const startBatch = Math.max(1, state.lastProcessedBatch + 1)
-
-  const currentBatch = await waitForRpc()
+  const db = indexerDb!
   const client = getRpcClient()
 
-  if (startBatch > currentBatch) {
+  // Migrate from Neo4j Meta node on first run
+  await migrateFromNeo4jMeta(db)
+
+  state.lastProcessedBatch = db.getLastIndexedBatch()
+  let currentBatch = await waitForRpc()
+
+  if (state.lastProcessedBatch >= currentBatch) {
     console.log(`[backfill] Already caught up (batch ${state.lastProcessedBatch}/${currentBatch})`)
+    state.backfillComplete = true
     return
   }
 
-  console.log(`[backfill] Starting from batch ${startBatch} to ${currentBatch} (${currentBatch - startBatch + 1} batches)`)
+  // Gap-aware: find ALL unindexed batches from 1 to currentBatch
+  const gaps = db.getUnindexedBatches(1, currentBatch)
+
+  if (gaps.length === 0) {
+    console.log(`[backfill] No gaps found — fully indexed up to batch ${currentBatch}`)
+    state.lastProcessedBatch = db.getLastIndexedBatch()
+    state.backfillComplete = true
+    return
+  }
+
+  console.log(`[backfill] ${gaps.length} unindexed batches to process (1..${currentBatch})`)
   console.log(
-    `[backfill] Tuning checkpointEvery=${tuning.checkpointInterval}, throttle=${tuning.throttleMs}ms/${tuning.throttleEveryBatches} batches, deferAggregates=${tuning.deferAggregates}`
+    `[backfill] Tuning throttle=${tuning.throttleMs}ms/${tuning.throttleEveryBatches} batches, deferAggregates=${tuning.deferAggregates}`
   )
 
   const backfillStartMs = Date.now()
   let aggregateRebuildNeeded = false
-  let pendingIndexedDelta = 0
   let consecutiveErrors = 0
+  let processedCount = 0
 
-  for (let batch = startBatch; batch <= currentBatch; batch++) {
+  for (let i = 0; i < gaps.length; i++) {
+    const batch = gaps[i]
+
     if (!state.running) {
-      if (state.lastProcessedBatch >= startBatch) {
-        await persistCheckpoint(state.lastProcessedBatch, pendingIndexedDelta)
-        pendingIndexedDelta = 0
-      }
+      state.lastProcessedBatch = db.getLastIndexedBatch()
       console.log('[backfill] Stopped')
       return
     }
 
     try {
-      const result = await client.blockchain.getTransactionsByBatchNumber(batch)
+      const result = await withTimeout(
+        client.blockchain.getTransactionsByBatchNumber(batch),
+        30_000,
+        `getTransactionsByBatchNumber(${batch})`
+      )
       const rawTxs = unwrap<any[]>(result)
 
       if (rawTxs && rawTxs.length > 0) {
@@ -256,48 +289,78 @@ async function runBackfill(): Promise<void> {
             const pairs = extractPairs(txs)
             await updateEdgeAggregatesForPairs(pairs)
           }
-          state.totalTransactionsIndexed += writeResult.count
-          pendingIndexedDelta += writeResult.count
         }
+
+        db.markBatchIndexed(batch, writeResult.count)
+      } else {
+        db.markBatchIndexed(batch, 0)
       }
 
       consecutiveErrors = 0
-      state.lastProcessedBatch = batch
-      const shouldPersist = shouldPersistBackfillCheckpoint(
-        batch,
-        startBatch,
-        currentBatch,
-        tuning.checkpointInterval
-      )
-      const isFinalBatch = batch === currentBatch
-      if (shouldPersist && (!isFinalBatch || !tuning.deferAggregates)) {
-        await persistCheckpoint(batch, pendingIndexedDelta)
-        pendingIndexedDelta = 0
-      }
+      processedCount++
+      state.lastProcessedBatch = db.getLastIndexedBatch()
 
-      if (batch % 100 === 0) {
-        const processedBatches = batch - startBatch + 1
-        const remainingBatches = currentBatch - batch
-        const etaMs = estimateBackfillEtaMs(processedBatches, remainingBatches, Date.now() - backfillStartMs)
-        const progress = ((processedBatches / (currentBatch - startBatch + 1)) * 100).toFixed(1)
-        console.log(`[backfill] Batch ${batch}/${currentBatch} (${progress}%, ETA ${formatEta(etaMs)})`)
+      if (processedCount % 100 === 0) {
+        const remainingBatches = gaps.length - processedCount
+        const etaMs = estimateBackfillEtaMs(processedCount, remainingBatches, Date.now() - backfillStartMs)
+        const progress = ((processedCount / gaps.length) * 100).toFixed(1)
+        console.log(`[backfill] ${processedCount}/${gaps.length} batches (${progress}%, ETA ${formatEta(etaMs)})`)
       }
 
       // Small delay to avoid overwhelming the RPC node
-      if (tuning.throttleMs > 0 && batch % tuning.throttleEveryBatches === 0) {
+      if (tuning.throttleMs > 0 && processedCount % tuning.throttleEveryBatches === 0) {
         await new Promise((r) => setTimeout(r, tuning.throttleMs))
       }
     } catch (error) {
       consecutiveErrors++
       const msg = error instanceof Error ? error.message : String(error)
+
+      // Handle "not found" as empty batch
+      if (isNotFoundError(msg)) {
+        console.warn(`[backfill] Batch ${batch} not found, treating as empty`)
+        db.markBatchIndexed(batch, 0)
+        consecutiveErrors = 0
+        processedCount++
+        continue
+      }
+
       console.error(`[backfill] Error processing batch ${batch}:`, msg)
+
+      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+        console.error(`[backfill] ${MAX_CONSECUTIVE_ERRORS} consecutive errors — skipping batch ${batch}`)
+        state.skippedBatches.push(batch)
+        consecutiveErrors = 0
+        // Don't mark in SQLite — it remains a gap for future retry
+        continue
+      }
+
       // Exponential backoff: 5s, 10s, 20s, 40s, capped at 60s
       const delay = Math.min(5000 * 2 ** (consecutiveErrors - 1), 60_000)
       console.log(`[backfill] Retrying in ${delay / 1000}s (attempt ${consecutiveErrors})`)
       await new Promise((r) => setTimeout(r, delay))
       // Retry same batch
-      batch--
+      i--
     }
+  }
+
+  // Check for new batches that arrived during backfill
+  try {
+    const latestResult = await withTimeout(
+      client.blockchain.getBatchNumber(),
+      15_000,
+      'getBatchNumber'
+    )
+    const latestBatch = unwrap<number>(latestResult)
+    if (latestBatch > currentBatch) {
+      const newGaps = db.getUnindexedBatches(currentBatch + 1, latestBatch)
+      if (newGaps.length > 0) {
+        console.log(`[backfill] ${newGaps.length} new batches arrived during backfill, continuing...`)
+        // Recursively process new gaps (backfill will be called again by startBlockchainIndexer retry loop)
+        currentBatch = latestBatch
+      }
+    }
+  } catch (err) {
+    console.warn('[backfill] Failed to check for newer batches:', err instanceof Error ? err.message : err)
   }
 
   if (tuning.deferAggregates && aggregateRebuildNeeded) {
@@ -306,11 +369,15 @@ async function runBackfill(): Promise<void> {
     console.log('[backfill] Aggregate rebuild complete')
   }
 
-  await persistCheckpoint(state.lastProcessedBatch, pendingIndexedDelta)
-  pendingIndexedDelta = 0
   await markBackfilledAddressesComplete()
+  state.lastProcessedBatch = db.getLastIndexedBatch()
   state.backfillComplete = true
-  console.log(`[backfill] Complete — processed up to batch ${state.lastProcessedBatch}`)
+
+  if (state.skippedBatches.length > 0) {
+    console.warn(`[backfill] Complete with ${state.skippedBatches.length} skipped batches: ${state.skippedBatches.slice(0, 20).join(', ')}${state.skippedBatches.length > 20 ? '...' : ''}`)
+  } else {
+    console.log(`[backfill] Complete — processed up to batch ${state.lastProcessedBatch}`)
+  }
 }
 
 // --- Live subscription ---
@@ -344,13 +411,11 @@ async function startLiveSubscription(): Promise<void> {
       const transactions = block.transactions ?? []
 
       // Track batch progress from macro blocks (each macro block closes a batch)
-      if (block.type === BlockType.Macro && state.backfillComplete) {
+      if (block.type === BlockType.Macro && state.backfillComplete && indexerDb) {
         const completedBatch = block.batch - 1
         if (completedBatch > state.lastProcessedBatch) {
+          indexerDb.markBatchIndexed(completedBatch, 0)
           state.lastProcessedBatch = completedBatch
-          await persistCheckpoint(completedBatch, 0).catch((err) => {
-            console.error('[live] Failed to persist batch checkpoint:', err)
-          })
         }
       }
 
@@ -363,8 +428,12 @@ async function startLiveSubscription(): Promise<void> {
         if (writeResult.count > 0) {
           const pairs = extractPairs(txs)
           await updateEdgeAggregatesForPairs(pairs)
-          state.totalTransactionsIndexed += writeResult.count
-          await persistCheckpoint(state.lastProcessedBatch, writeResult.count)
+
+          // Best-effort concurrent balance fetching for live blocks
+          const uniqueAddresses = [...new Set(txs.flatMap(tx => [tx.from, tx.to]))]
+          fetchAndUpdateBalances(client, uniqueAddresses).catch((err) => {
+            console.warn('[live] Balance update failed:', err instanceof Error ? err.message : err)
+          })
         }
 
         console.log(`[live] Block #${block.number}: ${writeResult.count} transactions indexed`)
@@ -381,14 +450,40 @@ async function startLiveSubscription(): Promise<void> {
   }
 }
 
+async function fetchAndUpdateBalances(client: ReturnType<typeof getRpcClient>, addresses: string[]): Promise<void> {
+  const tasks = addresses.map((addr) => async () => {
+    try {
+      const result = await withTimeout(
+        client.blockchain.getAccountByAddress(addr, { withMetadata: false }),
+        10_000,
+        `getAccountByAddress(${addr})`
+      )
+      const account = unwrap<any>(result)
+      return { address: formatAddress(addr), balance: String(account?.balance ?? 0) }
+    } catch {
+      return null
+    }
+  })
+
+  const results = await poolAll(tasks, 5)
+  const entries = results.filter((r): r is { address: string; balance: string } => r != null)
+  if (entries.length > 0) {
+    await updateAddressBalances(entries)
+  }
+}
+
 // --- Public API ---
 
 export function getIndexerStatus() {
+  const db = indexerDb
   return {
     lastProcessedBatch: state.lastProcessedBatch,
     liveSubscriptionActive: state.liveSubscriptionActive,
-    totalTransactionsIndexed: state.totalTransactionsIndexed,
+    totalTransactionsIndexed: db ? db.getTotalTransactionsIndexed() : 0,
+    indexedBatchCount: db ? db.getIndexedBatchCount() : 0,
     running: state.running,
+    backfillComplete: state.backfillComplete,
+    skippedBatches: state.skippedBatches.length,
   }
 }
 
@@ -396,11 +491,22 @@ export async function getIndexerStatusWithProgress() {
   let currentBatch = 0
   try {
     const client = getRpcClient()
-    const result = await client.blockchain.getBatchNumber()
+    const result = await withTimeout(
+      client.blockchain.getBatchNumber(),
+      15_000,
+      'getBatchNumber'
+    )
     currentBatch = unwrap<number>(result)
   } catch {
     // ignore
   }
+
+  const db = indexerDb
+  const indexedBatchCount = db ? db.getIndexedBatchCount() : 0
+  const totalTransactionsIndexed = db ? db.getTotalTransactionsIndexed() : 0
+  const gapCount = db && state.lastProcessedBatch > 0
+    ? db.getUnindexedBatches(1, state.lastProcessedBatch).length
+    : 0
 
   const progress = currentBatch > 0 && state.lastProcessedBatch >= 0
     ? ((state.lastProcessedBatch / currentBatch) * 100).toFixed(1) + '%'
@@ -411,14 +517,26 @@ export async function getIndexerStatusWithProgress() {
     currentBatch,
     backfillProgress: progress,
     liveSubscriptionActive: state.liveSubscriptionActive,
-    totalTransactionsIndexed: state.totalTransactionsIndexed,
+    totalTransactionsIndexed,
+    indexedBatchCount,
+    gapCount,
+    backfillComplete: state.backfillComplete,
     running: state.running,
+    skippedBatches: state.skippedBatches.length,
   }
+}
+
+export function getIndexerDb(): IndexerDb | null {
+  return indexerDb
 }
 
 export function startBlockchainIndexer(): { stop: () => Promise<void> } {
   ensureRpcClient()
   state.running = true
+
+  // Open SQLite database
+  indexerDb = openIndexerDb()
+  console.log('[indexer] SQLite indexer database opened')
 
   console.log('[indexer] Starting blockchain indexer...')
 
@@ -466,8 +584,14 @@ export function startBlockchainIndexer(): { stop: () => Promise<void> } {
         subscription = null
       }
 
+      if (indexerDb) {
+        indexerDb.close()
+        indexerDb = null
+      }
+
       state.liveSubscriptionActive = false
       console.log('[indexer] Stopped')
     },
   }
 }
+

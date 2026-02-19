@@ -1,4 +1,4 @@
-import { ensureRpcClient, getRpcClient, mapTransaction } from './rpc-client'
+import { ensureRpcClient, getRpcClient, mapTransaction, unwrap } from './rpc-client'
 import { formatAddress } from '../lib/address-utils'
 
 export interface TransactionData {
@@ -28,17 +28,6 @@ interface BlockData {
   number: number;
   timestamp: number;
   transactions: TransactionData[];
-}
-
-/**
- * Unwrap a CallResult, throwing on error.
- */
-function unwrap<T>(result: { data?: T; error?: { code: number; message: string } }): T {
-  const { data, error } = result
-  if (error) {
-    throw new Error(error.message ?? 'RPC call failed')
-  }
-  return data as T
 }
 
 export class NimiqService {

@@ -1,5 +1,5 @@
 import { Elysia, t } from 'elysia'
-import { getIndexerStatusWithProgress } from '../services/blockchain-indexer'
+import { getIndexerStatusWithProgress, getIndexerDb } from '../services/blockchain-indexer'
 import { verifyBackfillIntegrity } from '../services/verification'
 import { enforceSensitiveEndpointPolicy } from '../lib/security'
 
@@ -14,7 +14,7 @@ export const indexerRoutes = new Elysia({ prefix: '/indexer' })
     const sampleSize = Math.min(Math.max(Number(query.sample) || 10, 1), 50)
 
     try {
-      return await verifyBackfillIntegrity(sampleSize)
+      return await verifyBackfillIntegrity(sampleSize, getIndexerDb() ?? undefined)
     } catch (error) {
       set.status = 500
       return { error: error instanceof Error ? error.message : 'Verification failed' }
