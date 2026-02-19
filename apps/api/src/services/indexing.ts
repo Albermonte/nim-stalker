@@ -1,5 +1,5 @@
 import neo4j from 'neo4j-driver';
-import { writeTx, runAutoCommit, toNumber } from '../lib/neo4j';
+import { writeTx, readTx, runAutoCommit, toNumber } from '../lib/neo4j';
 import { type TransactionData } from './nimiq-rpc';
 import { AddressType } from '@nim-stalker/shared';
 
@@ -148,31 +148,75 @@ export async function updateEdgeAggregatesForPairs(
 /**
  * Recompute TRANSACTED_WITH and Address.txCount from raw TRANSACTION edges.
  * Intended for full backfill completion when per-batch aggregate updates are deferred.
+ *
+ * Uses application-driven SKIP/LIMIT pagination over Address nodes so each chunk
+ * keeps the in-memory result set proportional to CHUNK_SIZE instead of the entire graph.
+ * This prevents Neo4j from exceeding its transaction memory limit (512MB prod / 1GB dev).
  */
 export async function rebuildAllEdgeAggregates(): Promise<void> {
-  // Batched: uses CALL {} IN TRANSACTIONS to avoid loading entire graph in one tx.
-  // Requires auto-commit mode (cannot run inside executeWrite).
-  await runAutoCommit(
-    `MATCH (a:Address)-[t:TRANSACTION]->(b:Address)
-     WITH a, b, count(t) AS cnt, sum(toInteger(t.value)) AS total,
-          min(t.timestamp) AS firstTx, max(t.timestamp) AS lastTx
-     CALL {
-       WITH a, b, cnt, total, firstTx, lastTx
-       MERGE (a)-[r:TRANSACTED_WITH]->(b)
-       SET r.txCount = cnt, r.totalValue = toString(total),
-           r.firstTxAt = firstTx, r.lastTxAt = lastTx
-     } IN TRANSACTIONS OF 10000 ROWS`
-  );
+  const CHUNK_SIZE = 5_000;
+  const start = Date.now();
 
-  await runAutoCommit(
-    `MATCH (a:Address)
-     OPTIONAL MATCH (a)-[t:TRANSACTION]-()
-     WITH a, count(DISTINCT t) AS cnt
-     CALL {
-       WITH a, cnt
-       SET a.txCount = cnt
-     } IN TRANSACTIONS OF 10000 ROWS`
-  );
+  // Count total addresses for progress logging and loop bound
+  const countResult = await readTx(async (tx) => {
+    const res = await tx.run('MATCH (a:Address) RETURN count(a) AS total');
+    return toNumber(res.records[0]?.get('total'));
+  });
+  console.log(`[rebuild] ${countResult} addresses to process`);
+
+  // Phase 1: Rebuild TRANSACTED_WITH edges
+  let processed = 0;
+  for (let skip = 0; skip < countResult; skip += CHUNK_SIZE) {
+    await runAutoCommit(
+      `MATCH (a:Address)
+       WITH a ORDER BY a.id SKIP $skip LIMIT $limit
+       MATCH (a)-[t:TRANSACTION]->(b:Address)
+       WITH a, b, count(t) AS cnt, sum(toInteger(t.value)) AS total,
+            min(t.timestamp) AS firstTx, max(t.timestamp) AS lastTx
+       CALL {
+         WITH a, b, cnt, total, firstTx, lastTx
+         MERGE (a)-[r:TRANSACTED_WITH]->(b)
+         SET r.txCount = cnt, r.totalValue = toString(total),
+             r.firstTxAt = firstTx, r.lastTxAt = lastTx
+       } IN TRANSACTIONS OF 1000 ROWS`,
+      { skip: neo4j.int(skip), limit: neo4j.int(CHUNK_SIZE) }
+    );
+    processed = Math.min(skip + CHUNK_SIZE, countResult);
+    const pct = ((processed / countResult) * 100).toFixed(1);
+    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+    console.log(`[rebuild] Phase 1/2: TRANSACTED_WITH — ${processed}/${countResult} (${pct}%) — ${elapsed}s`);
+  }
+
+  // Phase 2: Update Address.txCount
+  // Uses two directional counts instead of undirected OPTIONAL MATCH + DISTINCT,
+  // which doubles the result set and requires expensive in-memory deduplication.
+  // Smaller chunk size (1,000) to handle high-fan-out addresses (exchanges).
+  const PHASE2_CHUNK = 1_000;
+  const phase2Start = Date.now();
+  processed = 0;
+  for (let skip = 0; skip < countResult; skip += PHASE2_CHUNK) {
+    await runAutoCommit(
+      `MATCH (a:Address)
+       WITH a ORDER BY a.id SKIP $skip LIMIT $limit
+       OPTIONAL MATCH (a)-[out:TRANSACTION]->()
+       WITH a, count(out) AS outgoing
+       OPTIONAL MATCH (a)<-[inc:TRANSACTION]-()
+       WITH a, outgoing, count(inc) AS incoming
+       WITH a, outgoing + incoming AS cnt
+       CALL {
+         WITH a, cnt
+         SET a.txCount = cnt
+       } IN TRANSACTIONS OF 1000 ROWS`,
+      { skip: neo4j.int(skip), limit: neo4j.int(PHASE2_CHUNK) }
+    );
+    processed = Math.min(skip + PHASE2_CHUNK, countResult);
+    const pct = ((processed / countResult) * 100).toFixed(1);
+    const elapsed = ((Date.now() - phase2Start) / 1000).toFixed(1);
+    console.log(`[rebuild] Phase 2/2: txCount — ${processed}/${countResult} (${pct}%) — ${elapsed}s`);
+  }
+
+  const totalElapsed = ((Date.now() - start) / 1000).toFixed(1);
+  console.log(`[rebuild] Complete in ${totalElapsed}s`);
 }
 
 /**

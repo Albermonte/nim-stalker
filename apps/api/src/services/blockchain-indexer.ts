@@ -1,7 +1,7 @@
 import { type Block, type Subscription, BlockType } from '@albermonte/nimiq-rpc-client-ts'
 import { ensureRpcClient, getRpcClient, mapTransaction, unwrap } from './rpc-client'
 import { rebuildAllEdgeAggregates, writeTransactionBatch, updateEdgeAggregatesForPairs, markBackfilledAddressesComplete, updateAddressBalances } from './indexing'
-import { readTx } from '../lib/neo4j'
+import { readTx, toNumber } from '../lib/neo4j'
 import { config } from '../lib/config'
 import { openIndexerDb, type IndexerDb } from '../lib/indexer-db'
 import { withTimeout, poolAll } from '../lib/concurrency'
@@ -495,7 +495,7 @@ async function verifyBatch(batch: number, client: ReturnType<typeof getRpcClient
         console.log(`[live] Batch ${batch} verified: ${writeResult.count} new transactions indexed`)
       }
 
-      indexerDb!.markBatchIndexed(batch, rawTxs.length)
+      indexerDb!.markBatchIndexed(batch, txs.filter(tx => tx.from && tx.to).length)
     } else {
       indexerDb!.markBatchIndexed(batch, 0)
     }
@@ -513,12 +513,23 @@ async function verifyBatch(batch: number, client: ReturnType<typeof getRpcClient
 
 // --- Public API ---
 
-export function getIndexerStatus() {
+export async function getIndexerStatus() {
   const db = indexerDb
+
+  let totalTransactionsIndexed = 0
+  try {
+    totalTransactionsIndexed = await readTx(async (tx) => {
+      const res = await tx.run('MATCH ()-[t:TRANSACTION]->() RETURN count(t) AS cnt')
+      return toNumber(res.records[0]?.get('cnt'))
+    })
+  } catch {
+    totalTransactionsIndexed = db ? db.getTotalTransactionsIndexed() : 0
+  }
+
   return {
     lastProcessedBatch: state.lastProcessedBatch,
     liveSubscriptionActive: state.liveSubscriptionActive,
-    totalTransactionsIndexed: db ? db.getTotalTransactionsIndexed() : 0,
+    totalTransactionsIndexed,
     indexedBatchCount: db ? db.getIndexedBatchCount() : 0,
     running: state.running,
     backfillComplete: state.backfillComplete,
@@ -542,10 +553,23 @@ export async function getIndexerStatusWithProgress() {
 
   const db = indexerDb
   const indexedBatchCount = db ? db.getIndexedBatchCount() : 0
-  const totalTransactionsIndexed = db ? db.getTotalTransactionsIndexed() : 0
   const gapCount = db && state.lastProcessedBatch > 0
     ? db.getUnindexedBatches(1, state.lastProcessedBatch).length
     : 0
+
+  // Query Neo4j for the real transaction count — SQLite tx_count sums are
+  // unreliable because the Neo4j→SQLite migration marked historical batches
+  // with tx_count=0 (the per-batch counts were unknown at migration time).
+  let totalTransactionsIndexed = 0
+  try {
+    totalTransactionsIndexed = await readTx(async (tx) => {
+      const res = await tx.run('MATCH ()-[t:TRANSACTION]->() RETURN count(t) AS cnt')
+      return toNumber(res.records[0]?.get('cnt'))
+    })
+  } catch {
+    // Fallback to SQLite sum if Neo4j is unreachable
+    totalTransactionsIndexed = db ? db.getTotalTransactionsIndexed() : 0
+  }
 
   const progress = currentBatch > 0 && state.lastProcessedBatch >= 0
     ? ((state.lastProcessedBatch / currentBatch) * 100).toFixed(1) + '%'
