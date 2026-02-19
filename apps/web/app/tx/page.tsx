@@ -2,11 +2,24 @@
 
 import { Suspense, useEffect, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import { toast } from 'sonner';
-import { TxTimeline } from '@/components/tx/TxTimeline';
 import { formatNimiqAddress } from '@/lib/format-utils';
 import { isAddressSlug, urlSlugToAddress } from '@/lib/url-utils';
 import type { Direction } from '@nim-stalker/shared';
+
+function TxTimelineLoading() {
+  return (
+    <div className="flex items-center justify-center h-screen w-full">
+      <div className="animate-pulse text-nq-pink text-lg">Loading timeline...</div>
+    </div>
+  );
+}
+
+const TxTimeline = dynamic(
+  () => import('@/components/tx/TxTimeline').then((mod) => mod.TxTimeline),
+  { ssr: false, loading: () => <TxTimelineLoading /> }
+);
 
 const ALLOWED_DIRECTIONS: Direction[] = ['incoming', 'outgoing', 'both'];
 const ALLOWED_LIMITS = new Set([50, 100, 200, 500]);

@@ -488,7 +488,11 @@ async function processLiveBlock(block: Block, client: ReturnType<typeof getRpcCl
     if (completedBatch > state.lastProcessedBatch) {
       // Fill transition gaps between last processed and completed batch
       const transitionGaps = indexerDb.getUnindexedBatches(state.lastProcessedBatch + 1, completedBatch)
-      for (const gap of transitionGaps) {
+      const cappedGaps = transitionGaps.slice(0, 20)
+      if (transitionGaps.length > 20) {
+        console.warn(`[live] ${transitionGaps.length} transition gaps found, processing first 20 (rest deferred to gap repair)`)
+      }
+      for (const gap of cappedGaps) {
         try {
           await verifyBatch(gap, client)
         } catch (err) {
