@@ -201,42 +201,6 @@ async function waitForRpc(maxRetries = 20, baseDelay = 3000): Promise<number> {
   throw new Error('RPC readiness check exhausted') // unreachable
 }
 
-// --- Migration from Neo4j Meta node ---
-
-async function migrateFromNeo4jMeta(db: IndexerDb): Promise<void> {
-  if (db.getMeta('migrated_from_neo4j') === 'true') return
-  if (db.getLastIndexedBatch() >= 0) {
-    // SQLite already has data, skip migration
-    db.setMeta('migrated_from_neo4j', 'true')
-    return
-  }
-
-  const metaResult = await readTx(async (tx) => {
-    const result = await tx.run(
-      `MATCH (m:Meta {key: $key}) RETURN m.lastProcessedBatch AS batch`,
-      { key: 'indexer' }
-    )
-    if (result.records.length === 0) return -1
-    const val = result.records[0].get('batch')
-    return typeof val === 'number' ? val : Number(val)
-  })
-
-  if (metaResult > 0) {
-    console.log(`[migration] Migrating ${metaResult} batches from Neo4j Meta node to SQLite...`)
-    // Bulk insert in chunks to avoid overwhelming SQLite
-    const CHUNK_SIZE = 10_000
-    for (let start = 1; start <= metaResult; start += CHUNK_SIZE) {
-      const end = Math.min(start + CHUNK_SIZE - 1, metaResult)
-      for (let batch = start; batch <= end; batch++) {
-        db.markBatchIndexed(batch, 0) // tx_count unknown for historical batches
-      }
-    }
-    console.log(`[migration] Migration complete — ${metaResult} batches marked in SQLite`)
-  }
-
-  db.setMeta('migrated_from_neo4j', 'true')
-}
-
 // --- Backfill worker ---
 
 async function runBackfill(): Promise<void> {
@@ -245,9 +209,6 @@ async function runBackfill(): Promise<void> {
   const tuning = parseBackfillTuning(process.env)
   const db = indexerDb!
   const client = getRpcClient()
-
-  // Migrate from Neo4j Meta node on first run
-  await migrateFromNeo4jMeta(db)
 
   // Self-healing: mark backfilled addresses from prior runs
   await markBackfilledAddressesComplete()

@@ -97,6 +97,13 @@ services:
       BACKFILL_THROTTLE_MS: ${BACKFILL_THROTTLE_MS:-0}
       BACKFILL_THROTTLE_EVERY_BATCHES: ${BACKFILL_THROTTLE_EVERY_BATCHES:-10}
       BACKFILL_DEFER_AGGREGATES: ${BACKFILL_DEFER_AGGREGATES:-true}
+      REBUILD_PHASE1_CHUNK_SIZE: ${REBUILD_PHASE1_CHUNK_SIZE:-1000}
+      REBUILD_PHASE1_ROWS_PER_TX: ${REBUILD_PHASE1_ROWS_PER_TX:-250}
+      REBUILD_PHASE2_CHUNK_SIZE: ${REBUILD_PHASE2_CHUNK_SIZE:-1000}
+      REBUILD_PHASE2_ROWS_PER_TX: ${REBUILD_PHASE2_ROWS_PER_TX:-250}
+      REBUILD_CHUNK_RETRY_ATTEMPTS: ${REBUILD_CHUNK_RETRY_ATTEMPTS:-3}
+      REBUILD_CHUNK_RETRY_BASE_DELAY_MS: ${REBUILD_CHUNK_RETRY_BASE_DELAY_MS:-2000}
+      REBUILD_CHUNK_RETRY_MAX_DELAY_MS: ${REBUILD_CHUNK_RETRY_MAX_DELAY_MS:-30000}
       PORT: 3001
     deploy:
       resources:
@@ -116,6 +123,7 @@ services:
     volumes:
       - ./apps/api/src:/app/apps/api/src
       - ./packages/shared:/app/packages/shared
+      - indexerdata:/app/apps/api/data
     develop:
       watch:
         - path: ./apps/api/package.json
@@ -174,3 +182,4 @@ volumes:
     external: true
     name: ${NEO4J_VOLUME_NAME:-neo4jdata}
   genesis:
+  indexerdata:
