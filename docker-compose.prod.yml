@@ -61,6 +61,7 @@ services:
       NEO4J_server_memory_heap_initial__size: ${NEO4J_HEAP_INITIAL:-512m}
       NEO4J_server_memory_heap_max__size: ${NEO4J_HEAP_MAX:-1G}
       NEO4J_server_memory_pagecache_size: ${NEO4J_PAGECACHE:-2G}
+      # Keep tx memory below heap max (e.g. 512m tx cap for 1G heap) to avoid heap OOM under load.
       NEO4J_dbms_memory_transaction_total_max: ${NEO4J_TX_MEMORY_MAX:-512m}
       NEO4J_db_memory_transaction_total_max: ${NEO4J_TX_MEMORY_MAX:-512m}
     deploy:

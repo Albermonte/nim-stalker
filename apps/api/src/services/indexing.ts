@@ -136,8 +136,12 @@ export async function updateEdgeAggregatesForPairs(
       await tx.run(
         `UNWIND $addresses AS addr
          MATCH (a:Address {id: addr})
-         OPTIONAL MATCH (a)-[t:TRANSACTION]-()
-         WITH a, count(DISTINCT t) AS cnt
+         OPTIONAL MATCH (a)-[out:TRANSACTION]->()
+         WITH a, count(out) AS outgoing
+         OPTIONAL MATCH (a)<-[inc:TRANSACTION]-()
+         WITH a, outgoing, count(inc) AS incoming
+         OPTIONAL MATCH (a)-[self:TRANSACTION]->(a)
+         WITH a, outgoing + incoming - count(self) AS cnt
          SET a.txCount = cnt`,
         { addresses: batch }
       );
@@ -151,7 +155,7 @@ export async function updateEdgeAggregatesForPairs(
  *
  * Uses application-driven SKIP/LIMIT pagination over Address nodes so each chunk
  * keeps the in-memory result set proportional to CHUNK_SIZE instead of the entire graph.
- * This prevents Neo4j from exceeding its transaction memory limit (512MB prod / 1GB dev).
+ * This prevents Neo4j from exceeding its transaction memory limit (512MB default).
  */
 export async function rebuildAllEdgeAggregates(): Promise<void> {
   const CHUNK_SIZE = 5_000;
@@ -264,4 +268,3 @@ export async function markBackfilledAddressesComplete(): Promise<number> {
   if (result > 0) console.log(`[backfill] Marked ${result} addresses as COMPLETE`);
   return result;
 }
-
