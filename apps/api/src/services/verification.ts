@@ -28,6 +28,7 @@ export interface VerificationResult {
     coveragePercent: string
     indexedBatchCount: number
     gapCount: number
+    gapList?: number[]
     ok: boolean
   }
   transactionCount: {
@@ -65,7 +66,11 @@ function pickRandomBatches(max: number, count: number): number[] {
   return Array.from(picked).sort((a, b) => a - b)
 }
 
-export async function verifyBackfillIntegrity(sampleSize = 10, indexerDb?: IndexerDb): Promise<VerificationResult> {
+export async function verifyBackfillIntegrity(
+  sampleSize = 10,
+  indexerDb?: IndexerDb,
+  options?: { includeGapList?: boolean }
+): Promise<VerificationResult> {
   const issues: string[] = []
   const client = getRpcClient()
 
@@ -103,8 +108,11 @@ export async function verifyBackfillIntegrity(sampleSize = 10, indexerDb?: Index
   const batchCoverageOk = lastProcessedBatch >= currentBatch - 2
 
   const gapCount = indexerDb
-    ? indexerDb.getUnindexedBatches(1, lastProcessedBatch).length
+    ? indexerDb.getGapCount(1, lastProcessedBatch)
     : 0
+  const gapList = indexerDb && options?.includeGapList
+    ? indexerDb.getUnindexedBatches(1, lastProcessedBatch)
+    : undefined
 
   if (!batchCoverageOk) {
     issues.push(`Batch coverage gap: processed ${lastProcessedBatch} of ${currentBatch} (${coveragePercent}%)`)
@@ -226,6 +234,7 @@ export async function verifyBackfillIntegrity(sampleSize = 10, indexerDb?: Index
       coveragePercent,
       indexedBatchCount,
       gapCount,
+      gapList,
       ok: batchCoverageOk,
     },
     transactionCount: {

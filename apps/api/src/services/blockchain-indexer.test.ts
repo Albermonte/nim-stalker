@@ -34,6 +34,7 @@ describe('parseBackfillTuning', () => {
       throttleEveryBatches: 10,
       throttleMs: 0,
       deferAggregates: true,
+      rpcPrefetch: 4,
     })
   })
 
@@ -43,6 +44,7 @@ describe('parseBackfillTuning', () => {
       BACKFILL_THROTTLE_EVERY_BATCHES: '5',
       BACKFILL_THROTTLE_MS: '20',
       BACKFILL_DEFER_AGGREGATES: 'false',
+      BACKFILL_RPC_PREFETCH: '8',
     })
 
     expect(tuning).toEqual({
@@ -50,6 +52,7 @@ describe('parseBackfillTuning', () => {
       throttleEveryBatches: 5,
       throttleMs: 20,
       deferAggregates: false,
+      rpcPrefetch: 8,
     })
   })
 })

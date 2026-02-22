@@ -5,6 +5,9 @@ export interface IndexerDb {
   markBatchIndexed(batch: number, txCount: number): void
   isBatchIndexed(batch: number): boolean
   getUnindexedBatches(from: number, to: number): number[]
+  getUnindexedBatchesPage(from: number, to: number, limit: number, afterBatch?: number): number[]
+  getFirstUnindexedBatch(from: number, to: number): number | null
+  getGapCount(from: number, to: number): number
   getLastIndexedBatch(): number
   getIndexedBatchCount(): number
   getTotalTransactionsIndexed(): number
@@ -63,9 +66,52 @@ export function openIndexerDb(path?: string): IndexerDb {
   const stmtSetMeta = db.prepare(
     'INSERT OR REPLACE INTO indexer_meta (key, value) VALUES (?, ?)'
   )
-  const stmtIndexedInRange = db.prepare(
-    'SELECT batch_number FROM indexed_batches WHERE batch_number >= ? AND batch_number <= ? ORDER BY batch_number'
+  const stmtIndexedCountInRange = db.prepare(
+    'SELECT COUNT(*) AS cnt FROM indexed_batches WHERE batch_number >= ? AND batch_number <= ?'
   )
+  const stmtIndexedPage = db.prepare(
+    'SELECT batch_number FROM indexed_batches WHERE batch_number >= ? AND batch_number <= ? ORDER BY batch_number LIMIT ?'
+  )
+
+  function fillGapRange(gaps: number[], start: number, end: number, limit: number): void {
+    for (let i = start; i <= end && gaps.length < limit; i++) {
+      gaps.push(i)
+    }
+  }
+
+  function collectGapsPage(from: number, to: number, limit: number, afterBatch?: number): number[] {
+    if (from > to || limit <= 0) return []
+
+    const maxPageSize = 5_000
+    let expected = Math.max(from, (afterBatch ?? (from - 1)) + 1)
+    if (expected > to) return []
+
+    const gaps: number[] = []
+    while (expected <= to && gaps.length < limit) {
+      const rows = stmtIndexedPage.all(expected, to, maxPageSize) as Array<{ batch_number: number }>
+      if (rows.length === 0) {
+        fillGapRange(gaps, expected, to, limit)
+        break
+      }
+
+      for (const row of rows) {
+        const indexedBatch = row.batch_number
+        if (indexedBatch > expected) {
+          fillGapRange(gaps, expected, Math.min(indexedBatch - 1, to), limit)
+          if (gaps.length >= limit) return gaps
+        }
+        expected = indexedBatch + 1
+        if (expected > to) return gaps
+      }
+
+      if (rows.length < maxPageSize) {
+        fillGapRange(gaps, expected, to, limit)
+        break
+      }
+    }
+
+    return gaps
+  }
 
   return {
     markBatchIndexed(batch: number, txCount: number): void {
@@ -78,13 +124,34 @@ export function openIndexerDb(path?: string): IndexerDb {
 
     getUnindexedBatches(from: number, to: number): number[] {
       if (from > to) return []
-      const rows = stmtIndexedInRange.all(from, to) as Array<{ batch_number: number }>
-      const indexed = new Set(rows.map(r => r.batch_number))
+      const pageSize = 10_000
       const gaps: number[] = []
-      for (let i = from; i <= to; i++) {
-        if (!indexed.has(i)) gaps.push(i)
+      let afterBatch = from - 1
+
+      while (true) {
+        const page = collectGapsPage(from, to, pageSize, afterBatch)
+        if (page.length === 0) break
+        gaps.push(...page)
+        afterBatch = page[page.length - 1]
       }
       return gaps
+    },
+
+    getUnindexedBatchesPage(from: number, to: number, limit: number, afterBatch?: number): number[] {
+      return collectGapsPage(from, to, limit, afterBatch)
+    },
+
+    getFirstUnindexedBatch(from: number, to: number): number | null {
+      const page = collectGapsPage(from, to, 1)
+      return page.length > 0 ? page[0] : null
+    },
+
+    getGapCount(from: number, to: number): number {
+      if (from > to) return 0
+      const totalBatches = to - from + 1
+      const row = stmtIndexedCountInRange.get(from, to) as { cnt: number } | null
+      const indexedCount = row?.cnt ?? 0
+      return Math.max(0, totalBatches - indexedCount)
     },
 
     getLastIndexedBatch(): number {

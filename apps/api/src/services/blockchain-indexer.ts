@@ -1,6 +1,6 @@
 import { type Block, type Subscription, BlockType } from '@albermonte/nimiq-rpc-client-ts'
 import { ensureRpcClient, getRpcClient, mapTransaction, unwrap } from './rpc-client'
-import { rebuildAllEdgeAggregates, writeTransactionBatch, updateEdgeAggregatesForPairs, markBackfilledAddressesComplete, updateAddressBalances } from './indexing'
+import { type AggregateDelta, rebuildAllEdgeAggregates, writeTransactionBatch, updateEdgeAggregatesFromDeltas, markBackfilledAddressesComplete, updateAddressBalances } from './indexing'
 import { readTx, toNumber } from '../lib/neo4j'
 import { config } from '../lib/config'
 import { openIndexerDb, type IndexerDb } from '../lib/indexer-db'
@@ -8,9 +8,13 @@ import { withTimeout, poolAll } from '../lib/concurrency'
 import { formatAddress } from '../lib/address-utils'
 
 const MAX_CONSECUTIVE_ERRORS = 10
+const BACKFILL_CHECKPOINT_KEY = 'backfill_checkpoint'
 
 interface IndexerState {
   lastProcessedBatch: number
+  lastVerifiedContiguousBatch: number
+  lastLiveBlockSeen: number | null
+  pendingLiveBlocks: number
   liveSubscriptionActive: boolean
   running: boolean
   backfillComplete: boolean
@@ -21,6 +25,9 @@ interface IndexerState {
 
 const state: IndexerState = {
   lastProcessedBatch: -1,
+  lastVerifiedContiguousBatch: -1,
+  lastLiveBlockSeen: null,
+  pendingLiveBlocks: 0,
   liveSubscriptionActive: false,
   running: false,
   backfillComplete: false,
@@ -32,19 +39,27 @@ const state: IndexerState = {
 let subscription: Subscription<Block> | null = null
 let indexerDb: IndexerDb | null = null
 let blockProcessingChain = Promise.resolve()
+let gapRepairTimer: ReturnType<typeof setInterval> | null = null
+const deferredAggregatePairs = new Map<string, AggregateDelta>()
+let deferredAggregateFlushTimer: ReturnType<typeof setTimeout> | null = null
+let deferredAggregateFlushInFlight = false
+let deferredAggregateFlushBackoffMs = 1_000
 
 interface BackfillTuning {
   checkpointInterval: number
   throttleMs: number
   throttleEveryBatches: number
   deferAggregates: boolean
+  rpcPrefetch: number
+}
+
+interface BackfillCheckpoint {
+  lastAttemptedBatch: number
+  lastSuccessfulBatch: number
+  updatedAt: string
 }
 
 // --- Helpers ---
-
-function extractPairs(txs: Array<{ from: string; to: string }>): Array<{ from: string; to: string }> {
-  return txs.map((tx) => ({ from: tx.from, to: tx.to }))
-}
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   if (!raw) return fallback
@@ -66,12 +81,246 @@ function parseBoolean(raw: string | undefined, fallback: boolean): boolean {
   return fallback
 }
 
+function normalizeBatch(batch: number): number {
+  return batch < 1 ? -1 : batch
+}
+
+function nextBatchAfterContiguous(batch: number): number {
+  return batch < 1 ? 1 : batch + 1
+}
+
+function readBackfillCheckpoint(db: IndexerDb): BackfillCheckpoint | null {
+  const raw = db.getMeta(BACKFILL_CHECKPOINT_KEY)
+  if (!raw) return null
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<BackfillCheckpoint>
+    const lastAttemptedBatch = Number(parsed.lastAttemptedBatch)
+    const lastSuccessfulBatch = Number(parsed.lastSuccessfulBatch)
+    const updatedAt = typeof parsed.updatedAt === 'string' ? parsed.updatedAt : ''
+
+    if (!Number.isFinite(lastAttemptedBatch) || !Number.isFinite(lastSuccessfulBatch) || !updatedAt) {
+      return null
+    }
+
+    return {
+      lastAttemptedBatch: Math.max(0, Math.floor(lastAttemptedBatch)),
+      lastSuccessfulBatch: Math.max(0, Math.floor(lastSuccessfulBatch)),
+      updatedAt,
+    }
+  } catch {
+    return null
+  }
+}
+
+function persistBackfillCheckpoint(db: IndexerDb, lastAttemptedBatch: number, lastSuccessfulBatch: number): void {
+  const checkpoint: BackfillCheckpoint = {
+    lastAttemptedBatch: Math.max(0, Math.floor(lastAttemptedBatch)),
+    lastSuccessfulBatch: Math.max(0, Math.floor(lastSuccessfulBatch)),
+    updatedAt: new Date().toISOString(),
+  }
+  db.setMeta(BACKFILL_CHECKPOINT_KEY, JSON.stringify(checkpoint))
+}
+
+function advanceContiguousFromCurrent(db: IndexerDb): void {
+  let next = nextBatchAfterContiguous(state.lastVerifiedContiguousBatch)
+  while (db.isBatchIndexed(next)) {
+    state.lastVerifiedContiguousBatch = next
+    next += 1
+  }
+}
+
+function advanceContiguousToUpperBound(db: IndexerDb, upperBound: number): void {
+  if (upperBound < 1) {
+    state.lastVerifiedContiguousBatch = -1
+    return
+  }
+
+  const start = nextBatchAfterContiguous(state.lastVerifiedContiguousBatch)
+  if (start > upperBound) return
+
+  const firstGap = db.getFirstUnindexedBatch(start, upperBound)
+  if (firstGap == null) {
+    state.lastVerifiedContiguousBatch = upperBound
+  } else {
+    state.lastVerifiedContiguousBatch = normalizeBatch(firstGap - 1)
+  }
+}
+
+function recomputeContiguousFromStart(db: IndexerDb, upperBound: number): void {
+  if (upperBound < 1) {
+    state.lastVerifiedContiguousBatch = -1
+    return
+  }
+
+  const firstGap = db.getFirstUnindexedBatch(1, upperBound)
+  if (firstGap == null) {
+    state.lastVerifiedContiguousBatch = upperBound
+  } else {
+    state.lastVerifiedContiguousBatch = normalizeBatch(firstGap - 1)
+  }
+}
+
+async function fetchBatchTransactions(client: ReturnType<typeof getRpcClient>, batch: number): Promise<any[]> {
+  const result = await withTimeout(
+    client.blockchain.getTransactionsByBatchNumber(batch),
+    30_000,
+    `getTransactionsByBatchNumber(${batch})`
+  )
+  return unwrap<any[]>(result)
+}
+
+async function indexRawBatchTransactions(
+  db: IndexerDb,
+  rawTxs: any[],
+  batch: number,
+  deferAggregates: boolean
+): Promise<{ aggregateRebuildNeeded: boolean }> {
+  if (rawTxs && rawTxs.length > 0) {
+    const txs = rawTxs.map(mapTransaction)
+    const writeResult = await writeTransactionBatch(txs)
+
+    let aggregateRebuildNeeded = false
+    if (writeResult.aggregateDeltas.length > 0) {
+      if (deferAggregates) {
+        aggregateRebuildNeeded = true
+      } else {
+        await updateEdgeAggregatesFromDeltas(writeResult.aggregateDeltas)
+      }
+    }
+
+    db.markBatchIndexed(batch, writeResult.count)
+    return { aggregateRebuildNeeded }
+  }
+
+  db.markBatchIndexed(batch, 0)
+  return { aggregateRebuildNeeded: false }
+}
+
+function getTransitionBudgetMs(env: Record<string, string | undefined>): number {
+  return parsePositiveInt(env.LIVE_TRANSITION_GAP_BUDGET_MS, 5_000)
+}
+
+function shouldDeferVerifyBatchAggregates(env: Record<string, string | undefined>): boolean {
+  return parseBoolean(env.VERIFY_BATCH_DEFER_AGGREGATES, true)
+}
+
+function shouldDeferLiveAggregates(env: Record<string, string | undefined>): boolean {
+  return parseBoolean(env.LIVE_DEFER_AGGREGATES, true)
+}
+
+function getVerifyBatchAggregatePairBatchSize(env: Record<string, string | undefined>): number {
+  return parsePositiveInt(env.VERIFY_BATCH_AGGREGATE_PAIR_BATCH_SIZE, 5)
+}
+
+function getVerifyBatchAggregateFlushLimit(env: Record<string, string | undefined>): number {
+  return parsePositiveInt(env.VERIFY_BATCH_AGGREGATE_FLUSH_LIMIT, 50)
+}
+
+function getVerifyBatchAggregateFlushTickMs(env: Record<string, string | undefined>): number {
+  return parseNonNegativeInt(env.VERIFY_BATCH_AGGREGATE_FLUSH_TICK_MS, 1_000)
+}
+
+function queueDeferredAggregatePairs(deltas: AggregateDelta[]): number {
+  for (const delta of deltas) {
+    const key = `${delta.from}->${delta.to}`
+    const current = deferredAggregatePairs.get(key)
+    if (current) {
+      current.txCount += delta.txCount
+      current.totalValue = (BigInt(current.totalValue) + BigInt(delta.totalValue)).toString()
+      if (delta.firstTxAt < current.firstTxAt) current.firstTxAt = delta.firstTxAt
+      if (delta.lastTxAt > current.lastTxAt) current.lastTxAt = delta.lastTxAt
+    } else {
+      deferredAggregatePairs.set(key, { ...delta })
+    }
+  }
+  return deferredAggregatePairs.size
+}
+
+async function flushDeferredAggregatePairs(maxPairs?: number): Promise<boolean> {
+  if (deferredAggregatePairs.size === 0) return true
+
+  const pairBatchSize = getVerifyBatchAggregatePairBatchSize(process.env)
+  const limit = maxPairs ?? getVerifyBatchAggregateFlushLimit(process.env)
+  const entries = Array.from(deferredAggregatePairs.entries()).slice(0, limit)
+  if (entries.length === 0) return true
+
+  console.log(`[gap-repair] Flushing deferred aggregates for ${entries.length} pairs...`)
+
+  for (let i = 0; i < entries.length; i += pairBatchSize) {
+    const chunk = entries.slice(i, i + pairBatchSize)
+    try {
+      await updateEdgeAggregatesFromDeltas(chunk.map(([, delta]) => delta))
+      for (const [key] of chunk) {
+        deferredAggregatePairs.delete(key)
+      }
+    } catch (error) {
+      console.warn(`[gap-repair] Deferred aggregate flush failed: ${error instanceof Error ? error.message : error}`)
+      return false
+    }
+  }
+
+  return true
+}
+
+function stopDeferredAggregateFlush(): void {
+  if (deferredAggregateFlushTimer) {
+    clearTimeout(deferredAggregateFlushTimer)
+    deferredAggregateFlushTimer = null
+  }
+  deferredAggregateFlushBackoffMs = getVerifyBatchAggregateFlushTickMs(process.env)
+}
+
+function scheduleDeferredAggregateFlush(delayMs = 0): void {
+  if (!state.running || deferredAggregatePairs.size === 0) return
+  if (deferredAggregateFlushInFlight || deferredAggregateFlushTimer) return
+
+  const tickMs = Math.max(delayMs, getVerifyBatchAggregateFlushTickMs(process.env))
+  deferredAggregateFlushTimer = setTimeout(() => {
+    deferredAggregateFlushTimer = null
+
+    void (async () => {
+      if (!state.running || deferredAggregatePairs.size === 0 || deferredAggregateFlushInFlight) return
+
+      deferredAggregateFlushInFlight = true
+      const before = deferredAggregatePairs.size
+      let flushed = false
+      try {
+        flushed = await flushDeferredAggregatePairs(getVerifyBatchAggregateFlushLimit(process.env))
+      } finally {
+        deferredAggregateFlushInFlight = false
+      }
+
+      const after = deferredAggregatePairs.size
+      if (after > 0 && state.running) {
+        if (!flushed) {
+          deferredAggregateFlushBackoffMs = Math.min(deferredAggregateFlushBackoffMs * 2, 300_000)
+          console.warn(`[gap-repair] Deferred aggregate flush retry in ${deferredAggregateFlushBackoffMs}ms`)
+          scheduleDeferredAggregateFlush(deferredAggregateFlushBackoffMs)
+          return
+        }
+
+        deferredAggregateFlushBackoffMs = getVerifyBatchAggregateFlushTickMs(process.env)
+        if (after === before) {
+          console.warn(`[gap-repair] Deferred aggregate queue unchanged (${after} pairs), will retry`)
+        } else {
+          console.log(`[gap-repair] Deferred aggregate queue remaining: ${after} pairs`)
+        }
+        scheduleDeferredAggregateFlush()
+      } else {
+        deferredAggregateFlushBackoffMs = getVerifyBatchAggregateFlushTickMs(process.env)
+      }
+    })()
+  }, tickMs)
+}
+
 export function parseBackfillTuning(env: Record<string, string | undefined>): BackfillTuning {
   return {
     checkpointInterval: parsePositiveInt(env.BACKFILL_CHECKPOINT_INTERVAL, 100),
     throttleMs: parseNonNegativeInt(env.BACKFILL_THROTTLE_MS, 0),
     throttleEveryBatches: parsePositiveInt(env.BACKFILL_THROTTLE_EVERY_BATCHES, 10),
     deferAggregates: parseBoolean(env.BACKFILL_DEFER_AGGREGATES, true),
+    rpcPrefetch: parsePositiveInt(env.BACKFILL_RPC_PREFETCH, 4),
   }
 }
 
@@ -214,114 +463,154 @@ async function runBackfill(): Promise<void> {
   await markBackfilledAddressesComplete()
 
   state.lastProcessedBatch = db.getLastIndexedBatch()
+  recomputeContiguousFromStart(db, state.lastProcessedBatch)
   let currentBatch = await waitForRpc()
 
   if (state.lastProcessedBatch >= currentBatch) {
     console.log(`[backfill] Already caught up (batch ${state.lastProcessedBatch}/${currentBatch})`)
     state.backfillComplete = true
+    persistBackfillCheckpoint(db, state.lastProcessedBatch, state.lastProcessedBatch)
     return
   }
 
-  // Gap-aware: find ALL unindexed batches from 1 to currentBatch
-  const gaps = db.getUnindexedBatches(1, currentBatch)
-
-  if (gaps.length === 0) {
+  const totalGapCount = db.getGapCount(1, currentBatch)
+  if (totalGapCount === 0) {
     console.log(`[backfill] No gaps found — fully indexed up to batch ${currentBatch}`)
     state.lastProcessedBatch = db.getLastIndexedBatch()
+    recomputeContiguousFromStart(db, state.lastProcessedBatch)
     state.backfillComplete = true
+    persistBackfillCheckpoint(db, state.lastProcessedBatch, state.lastProcessedBatch)
     return
   }
 
-  console.log(`[backfill] ${gaps.length} unindexed batches to process (1..${currentBatch})`)
+  const firstGap = db.getFirstUnindexedBatch(1, currentBatch) ?? 1
+  const checkpoint = readBackfillCheckpoint(db)
+  let gapCursor = firstGap - 1
+  if (checkpoint && checkpoint.lastSuccessfulBatch < firstGap) {
+    gapCursor = checkpoint.lastSuccessfulBatch
+  }
+
+  console.log(`[backfill] ${totalGapCount} unindexed batches to process (1..${currentBatch})`)
   console.log(
-    `[backfill] Tuning throttle=${tuning.throttleMs}ms/${tuning.throttleEveryBatches} batches, deferAggregates=${tuning.deferAggregates}`
+    `[backfill] Tuning prefetch=${tuning.rpcPrefetch}, throttle=${tuning.throttleMs}ms/${tuning.throttleEveryBatches} batches, deferAggregates=${tuning.deferAggregates}`
   )
+  if (checkpoint) {
+    console.log(`[backfill] Resuming from checkpoint attempted=${checkpoint.lastAttemptedBatch} successful=${checkpoint.lastSuccessfulBatch}`)
+  }
 
   const backfillStartMs = Date.now()
+  const syntheticEndBatch = firstGap + totalGapCount - 1
   let aggregateRebuildNeeded = false
   let consecutiveErrors = 0
   let processedCount = 0
+  let throttleCounter = 0
 
-  for (let i = 0; i < gaps.length; i++) {
-    const batch = gaps[i]
+  const onIndexedBatch = async (batch: number, countTowardsProgress: boolean): Promise<void> => {
+    state.lastProcessedBatch = db.getLastIndexedBatch()
+    advanceContiguousFromCurrent(db)
 
-    if (!state.running) {
-      state.lastProcessedBatch = db.getLastIndexedBatch()
-      console.log('[backfill] Stopped')
-      return
+    throttleCounter += 1
+
+    if (countTowardsProgress) {
+      processedCount += 1
+      if (processedCount % 100 === 0) {
+        const remainingBatches = Math.max(0, totalGapCount - processedCount)
+        const etaMs = estimateBackfillEtaMs(processedCount, remainingBatches, Date.now() - backfillStartMs)
+        const progress = ((processedCount / totalGapCount) * 100).toFixed(1)
+        console.log(`[backfill] ${processedCount}/${totalGapCount} batches (${progress}%, ETA ${formatEta(etaMs)})`)
+      }
+
+      const syntheticBatch = firstGap + processedCount - 1
+      if (shouldPersistBackfillCheckpoint(syntheticBatch, firstGap, syntheticEndBatch, tuning.checkpointInterval)) {
+        persistBackfillCheckpoint(db, batch, state.lastProcessedBatch)
+      }
     }
 
-    try {
-      const result = await withTimeout(
-        client.blockchain.getTransactionsByBatchNumber(batch),
-        30_000,
-        `getTransactionsByBatchNumber(${batch})`
-      )
-      const rawTxs = unwrap<any[]>(result)
+    if (tuning.throttleMs > 0 && throttleCounter % tuning.throttleEveryBatches === 0) {
+      await new Promise((r) => setTimeout(r, tuning.throttleMs))
+    }
+  }
 
-      if (rawTxs && rawTxs.length > 0) {
-        const txs = rawTxs.map(mapTransaction)
-        const writeResult = await writeTransactionBatch(txs)
+  const processGapPage = async (gapPage: number[], countTowardsProgress: boolean): Promise<void> => {
+    const prefetched = gapPage.map((batch) => ({
+      batch,
+      promise: fetchBatchTransactions(client, batch),
+    }))
 
-        if (writeResult.count > 0) {
-          if (tuning.deferAggregates) {
+    for (const item of prefetched) {
+      if (!state.running) return
+
+      let rawTxs: any[] | null = null
+      let pendingError: unknown | null = null
+
+      try {
+        rawTxs = await item.promise
+      } catch (error) {
+        pendingError = error
+      }
+
+      let done = false
+      while (!done) {
+        if (!pendingError) {
+          const indexed = await indexRawBatchTransactions(db, rawTxs ?? [], item.batch, tuning.deferAggregates)
+          if (indexed.aggregateRebuildNeeded) {
             aggregateRebuildNeeded = true
-          } else {
-            const pairs = extractPairs(txs)
-            await updateEdgeAggregatesForPairs(pairs)
           }
+          consecutiveErrors = 0
+          await onIndexedBatch(item.batch, countTowardsProgress)
+          done = true
+          continue
         }
 
-        db.markBatchIndexed(batch, writeResult.count)
-      } else {
-        db.markBatchIndexed(batch, 0)
+        consecutiveErrors += 1
+        const msg = pendingError instanceof Error ? pendingError.message : String(pendingError)
+
+        if (isNotFoundError(msg)) {
+          console.warn(`[backfill] Batch ${item.batch} not found, treating as empty`)
+          db.markBatchIndexed(item.batch, 0)
+          consecutiveErrors = 0
+          await onIndexedBatch(item.batch, countTowardsProgress)
+          done = true
+          continue
+        }
+
+        console.error(`[backfill] Error processing batch ${item.batch}:`, msg)
+
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          console.error(`[backfill] ${MAX_CONSECUTIVE_ERRORS} consecutive errors — skipping batch ${item.batch}`)
+          state.skippedBatches.push(item.batch)
+          consecutiveErrors = 0
+          done = true
+          continue
+        }
+
+        const delay = Math.min(5000 * 2 ** (consecutiveErrors - 1), 60_000)
+        console.log(`[backfill] Retrying in ${delay / 1000}s (attempt ${consecutiveErrors})`)
+        await new Promise((r) => setTimeout(r, delay))
+
+        try {
+          rawTxs = await fetchBatchTransactions(client, item.batch)
+          pendingError = null
+        } catch (error) {
+          pendingError = error
+        }
       }
 
-      consecutiveErrors = 0
-      processedCount++
-      state.lastProcessedBatch = db.getLastIndexedBatch()
-
-      if (processedCount % 100 === 0) {
-        const remainingBatches = gaps.length - processedCount
-        const etaMs = estimateBackfillEtaMs(processedCount, remainingBatches, Date.now() - backfillStartMs)
-        const progress = ((processedCount / gaps.length) * 100).toFixed(1)
-        console.log(`[backfill] ${processedCount}/${gaps.length} batches (${progress}%, ETA ${formatEta(etaMs)})`)
-      }
-
-      // Small delay to avoid overwhelming the RPC node
-      if (tuning.throttleMs > 0 && processedCount % tuning.throttleEveryBatches === 0) {
-        await new Promise((r) => setTimeout(r, tuning.throttleMs))
-      }
-    } catch (error) {
-      consecutiveErrors++
-      const msg = error instanceof Error ? error.message : String(error)
-
-      // Handle "not found" as empty batch
-      if (isNotFoundError(msg)) {
-        console.warn(`[backfill] Batch ${batch} not found, treating as empty`)
-        db.markBatchIndexed(batch, 0)
-        consecutiveErrors = 0
-        processedCount++
-        continue
-      }
-
-      console.error(`[backfill] Error processing batch ${batch}:`, msg)
-
-      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-        console.error(`[backfill] ${MAX_CONSECUTIVE_ERRORS} consecutive errors — skipping batch ${batch}`)
-        state.skippedBatches.push(batch)
-        consecutiveErrors = 0
-        // Don't mark in SQLite — it remains a gap for future retry
-        continue
-      }
-
-      // Exponential backoff: 5s, 10s, 20s, 40s, capped at 60s
-      const delay = Math.min(5000 * 2 ** (consecutiveErrors - 1), 60_000)
-      console.log(`[backfill] Retrying in ${delay / 1000}s (attempt ${consecutiveErrors})`)
-      await new Promise((r) => setTimeout(r, delay))
-      // Retry same batch
-      i--
+      gapCursor = item.batch
     }
+  }
+
+  while (state.running) {
+    const gapPage = db.getUnindexedBatchesPage(1, currentBatch, Math.max(1, tuning.rpcPrefetch), gapCursor)
+    if (gapPage.length === 0) break
+    await processGapPage(gapPage, true)
+  }
+
+  if (!state.running) {
+    state.lastProcessedBatch = db.getLastIndexedBatch()
+    recomputeContiguousFromStart(db, state.lastProcessedBatch)
+    console.log('[backfill] Stopped')
+    return
   }
 
   // Process trailing batches that arrived during backfill
@@ -334,50 +623,30 @@ async function runBackfill(): Promise<void> {
         'getBatchNumber'
       )
       const latestBatch = unwrap<number>(latestResult)
-      const newGaps = db.getUnindexedBatches(currentBatch + 1, latestBatch)
-      if (newGaps.length === 0) {
+      const newGapCount = db.getGapCount(currentBatch + 1, latestBatch)
+      if (newGapCount === 0) {
         caughtUp = true
         break
       }
-      console.log(`[backfill] ${newGaps.length} new batches arrived during backfill, processing...`)
-      for (const batch of newGaps) {
-        if (!state.running) break
-        try {
-          const result = await withTimeout(
-            client.blockchain.getTransactionsByBatchNumber(batch),
-            30_000,
-            `getTransactionsByBatchNumber(${batch})`
-          )
-          const rawTxs = unwrap<any[]>(result)
-          if (rawTxs && rawTxs.length > 0) {
-            const txs = rawTxs.map(mapTransaction)
-            const writeResult = await writeTransactionBatch(txs)
-            if (writeResult.count > 0) {
-              if (tuning.deferAggregates) {
-                aggregateRebuildNeeded = true
-              } else {
-                const pairs = extractPairs(txs)
-                await updateEdgeAggregatesForPairs(pairs)
-              }
-            }
-            db.markBatchIndexed(batch, writeResult.count)
-          } else {
-            db.markBatchIndexed(batch, 0)
-          }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err)
-          if (isNotFoundError(msg)) {
-            db.markBatchIndexed(batch, 0)
-          } else {
-            console.warn(`[backfill] Failed trailing batch ${batch}: ${msg}`)
-            // Leave unindexed — gap repair will handle it
-          }
-        }
+
+      console.log(`[backfill] ${newGapCount} new batches arrived during backfill, processing...`)
+      let trailingCursor = currentBatch
+      while (state.running) {
+        const page = db.getUnindexedBatchesPage(
+          currentBatch + 1,
+          latestBatch,
+          Math.max(1, tuning.rpcPrefetch),
+          trailingCursor
+        )
+        if (page.length === 0) break
+        await processGapPage(page, false)
+        trailingCursor = page[page.length - 1]
       }
+
       currentBatch = latestBatch
     } catch (err) {
       console.warn('[backfill] Failed to check for newer batches:', err instanceof Error ? err.message : err)
-      caughtUp = true // Exit loop on RPC failure, gap repair will handle the rest
+      caughtUp = true // Exit loop on RPC failure, gap repair loop will handle the rest
     }
   }
 
@@ -389,7 +658,9 @@ async function runBackfill(): Promise<void> {
 
   await markBackfilledAddressesComplete()
   state.lastProcessedBatch = db.getLastIndexedBatch()
+  recomputeContiguousFromStart(db, state.lastProcessedBatch)
   state.backfillComplete = true
+  persistBackfillCheckpoint(db, state.lastProcessedBatch, state.lastProcessedBatch)
 
   if (state.skippedBatches.length > 0) {
     console.warn(`[backfill] Complete with ${state.skippedBatches.length} skipped batches: ${state.skippedBatches.slice(0, 20).join(', ')}${state.skippedBatches.length > 20 ? '...' : ''}`)
@@ -399,6 +670,33 @@ async function runBackfill(): Promise<void> {
 }
 
 // --- Live subscription ---
+
+function scheduleGapRepair(client: ReturnType<typeof getRpcClient>): void {
+  if (!state.running || !state.backfillComplete) return
+  blockProcessingChain = blockProcessingChain
+    .then(() => repairGaps(client))
+    .catch((err) => {
+      console.error('[gap-repair] Scheduled cycle failed:', err instanceof Error ? err.message : err)
+    })
+}
+
+function startGapRepairLoop(client: ReturnType<typeof getRpcClient>): void {
+  if (gapRepairTimer) {
+    clearInterval(gapRepairTimer)
+    gapRepairTimer = null
+  }
+
+  const gapConfig = parseGapRepairConfig(process.env)
+  gapRepairTimer = setInterval(() => {
+    scheduleGapRepair(client)
+  }, gapConfig.intervalMs)
+}
+
+function stopGapRepairLoop(): void {
+  if (!gapRepairTimer) return
+  clearInterval(gapRepairTimer)
+  gapRepairTimer = null
+}
 
 async function startLiveSubscription(): Promise<void> {
   await waitForConsensus()
@@ -426,44 +724,78 @@ async function startLiveSubscription(): Promise<void> {
       }
 
       const block = response.data
+      const txCount = block.transactions?.length ?? 0
+      state.pendingLiveBlocks += 1
 
-      blockProcessingChain = blockProcessingChain.then(() =>
-        processLiveBlock(block, client)
-      ).catch((error) => {
-        console.error(`[live] Error processing block #${block.number}:`, error instanceof Error ? error.message : error)
-      })
+      if (txCount > 0) {
+        console.log(`[live] Head block #${block.number} received with ${txCount} tx(s) (queue=${state.pendingLiveBlocks})`)
+      }
+
+      blockProcessingChain = blockProcessingChain
+        .then(() => processLiveBlock(block, client))
+        .catch((error) => {
+          console.error(`[live] Error processing block #${block.number}:`, error instanceof Error ? error.message : error)
+        })
+        .finally(() => {
+          state.pendingLiveBlocks = Math.max(0, state.pendingLiveBlocks - 1)
+        })
     })
 
     state.liveSubscriptionActive = true
     console.log('[live] Subscribed to head blocks')
+
+    startGapRepairLoop(client)
+    scheduleGapRepair(client)
   } catch (error) {
     console.error('[live] Failed to start subscription:', error instanceof Error ? error.message : error)
     state.liveSubscriptionActive = false
   }
 }
 
-async function processLiveBlock(block: Block, client: ReturnType<typeof getRpcClient>): Promise<void> {
-  // When a macro block closes a batch, verify all transactions are indexed
-  if (block.type === BlockType.Macro && state.backfillComplete && indexerDb) {
-    const completedBatch = block.batch - 1
-    if (completedBatch > state.lastProcessedBatch) {
-      // Fill transition gaps between last processed and completed batch
-      const transitionGaps = indexerDb.getUnindexedBatches(state.lastProcessedBatch + 1, completedBatch)
-      const cappedGaps = transitionGaps.slice(0, 20)
-      if (transitionGaps.length > 20) {
-        console.warn(`[live] ${transitionGaps.length} transition gaps found, processing first 20 (rest deferred to gap repair)`)
-      }
-      for (const gap of cappedGaps) {
-        try {
-          await verifyBatch(gap, client)
-        } catch (err) {
-          console.warn(`[live] Failed transition gap batch ${gap}: ${err instanceof Error ? err.message : err}`)
-        }
-      }
+async function processTransitionContinuity(
+  completedBatch: number,
+  client: ReturnType<typeof getRpcClient>
+): Promise<void> {
+  const db = indexerDb
+  if (!db || completedBatch < 1) return
+
+  advanceContiguousToUpperBound(db, completedBatch)
+  if (state.lastVerifiedContiguousBatch >= completedBatch) return
+
+  const budgetMs = getTransitionBudgetMs(process.env)
+  const deadline = Date.now() + budgetMs
+
+  while (state.running && Date.now() < deadline) {
+    const nextMissing = nextBatchAfterContiguous(state.lastVerifiedContiguousBatch)
+    if (nextMissing > completedBatch) break
+
+    try {
+      await verifyBatch(nextMissing, client)
+    } catch (err) {
+      console.warn(`[live] Failed transition gap batch ${nextMissing}: ${err instanceof Error ? err.message : err}`)
+      break
     }
 
-    // Periodic gap repair (internally throttled)
-    await repairGaps(client)
+    advanceContiguousToUpperBound(db, completedBatch)
+    if (state.lastVerifiedContiguousBatch >= completedBatch) break
+  }
+
+  advanceContiguousToUpperBound(db, completedBatch)
+  if (state.lastVerifiedContiguousBatch < completedBatch) {
+    const remaining = completedBatch - state.lastVerifiedContiguousBatch
+    console.warn(`[live] Continuity budget exhausted with ${remaining} unverified contiguous batches pending`)
+  }
+}
+
+async function processLiveBlock(block: Block, client: ReturnType<typeof getRpcClient>): Promise<void> {
+  state.lastLiveBlockSeen = block.number
+
+  // When a macro block closes a batch, verify contiguous batch coverage.
+  if (block.type === BlockType.Macro && state.backfillComplete && indexerDb) {
+    const completedBatch = block.batch - 1
+    if (completedBatch > state.lastVerifiedContiguousBatch) {
+      await processTransitionContinuity(completedBatch, client)
+    }
   }
 
   const transactions = block.transactions ?? []
@@ -471,17 +803,26 @@ async function processLiveBlock(block: Block, client: ReturnType<typeof getRpcCl
 
   const txs = transactions.map(mapTransaction)
   const writeResult = await writeTransactionBatch(txs)
+  let queuedCount: number | null = null
 
-  if (writeResult.count > 0) {
-    const pairs = extractPairs(txs)
-    await updateEdgeAggregatesForPairs(pairs)
+  if (writeResult.aggregateDeltas.length > 0) {
+    if (shouldDeferLiveAggregates(process.env)) {
+      queuedCount = queueDeferredAggregatePairs(writeResult.aggregateDeltas)
+      scheduleDeferredAggregateFlush()
+    } else {
+      await updateEdgeAggregatesFromDeltas(writeResult.aggregateDeltas)
+    }
 
     // Balance updates — awaited to prevent concurrent pool pressure
     const uniqueAddresses = [...new Set(txs.flatMap(tx => [tx.from, tx.to]))]
     await fetchAndUpdateBalances(client, uniqueAddresses)
   }
 
-  console.log(`[live] Block #${block.number}: ${writeResult.count} transactions indexed`)
+  if (queuedCount != null) {
+    console.log(`[live] Block #${block.number}: ${writeResult.insertedCount} transactions indexed (aggregates deferred, queued pairs=${queuedCount})`)
+  } else {
+    console.log(`[live] Block #${block.number}: ${writeResult.insertedCount} transactions indexed`)
+  }
 }
 
 async function fetchAndUpdateBalances(client: ReturnType<typeof getRpcClient>, addresses: string[]): Promise<void> {
@@ -506,39 +847,52 @@ async function fetchAndUpdateBalances(client: ReturnType<typeof getRpcClient>, a
   }
 }
 
-async function verifyBatch(batch: number, client: ReturnType<typeof getRpcClient>): Promise<void> {
+async function verifyBatch(batch: number, client: ReturnType<typeof getRpcClient>): Promise<boolean> {
+  const db = indexerDb
+  if (!db) return false
+
+  if (db.isBatchIndexed(batch)) {
+    return false
+  }
+
   try {
-    const result = await withTimeout(
-      client.blockchain.getTransactionsByBatchNumber(batch),
-      30_000,
-      `verifyBatch(${batch})`
-    )
-    const rawTxs = unwrap<any[]>(result)
+    const rawTxs = await fetchBatchTransactions(client, batch)
+    console.log(`[live] Verifying batch ${batch}: fetched ${rawTxs.length} tx(s)`)
 
     if (rawTxs && rawTxs.length > 0) {
       const txs = rawTxs.map(mapTransaction)
       const writeResult = await writeTransactionBatch(txs)
 
-      if (writeResult.count > 0) {
-        const pairs = extractPairs(txs)
-        await updateEdgeAggregatesForPairs(pairs)
-        console.log(`[live] Batch ${batch} verified: ${writeResult.count} new transactions indexed`)
+      if (writeResult.aggregateDeltas.length > 0) {
+        if (shouldDeferVerifyBatchAggregates(process.env)) {
+          const queuedCount = queueDeferredAggregatePairs(writeResult.aggregateDeltas)
+          console.log(`[live] Batch ${batch} verified: ${writeResult.insertedCount} new transactions indexed (aggregates deferred, queued pairs=${queuedCount})`)
+          scheduleDeferredAggregateFlush()
+        } else {
+          await updateEdgeAggregatesFromDeltas(writeResult.aggregateDeltas)
+          console.log(`[live] Batch ${batch} verified: ${writeResult.insertedCount} new transactions indexed`)
+        }
       }
 
-      indexerDb!.markBatchIndexed(batch, txs.filter(tx => tx.from && tx.to).length)
+      db.markBatchIndexed(batch, txs.filter(tx => tx.from && tx.to).length)
+      if (writeResult.insertedCount === 0) {
+        console.log(`[live] Batch ${batch} verification completed with 0 new tx (already indexed or deduped)`)
+      }
     } else {
-      indexerDb!.markBatchIndexed(batch, 0)
+      db.markBatchIndexed(batch, 0)
+      console.log(`[live] Batch ${batch} verification completed with no transactions`)
     }
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     if (isNotFoundError(msg)) {
-      indexerDb!.markBatchIndexed(batch, 0)
-      return
+      db.markBatchIndexed(batch, 0)
+      return true
     }
     throw error
   }
 
-  state.lastProcessedBatch = indexerDb!.getLastIndexedBatch()
+  state.lastProcessedBatch = db.getLastIndexedBatch()
+  return true
 }
 
 async function repairGaps(client: ReturnType<typeof getRpcClient>): Promise<void> {
@@ -546,11 +900,6 @@ async function repairGaps(client: ReturnType<typeof getRpcClient>): Promise<void
   if (!db || !state.running || !state.backfillComplete) return
 
   const gapConfig = parseGapRepairConfig(process.env)
-
-  // Throttle: skip if last scan was too recent
-  if (Date.now() - state.lastGapScanAt < gapConfig.intervalMs) return
-
-  state.lastGapScanAt = Date.now()
 
   let currentBatch: number
   try {
@@ -564,26 +913,45 @@ async function repairGaps(client: ReturnType<typeof getRpcClient>): Promise<void
     return // RPC unavailable, skip this cycle
   }
 
-  const gaps = db.getUnindexedBatches(1, currentBatch)
-  if (gaps.length === 0) return
+  state.lastGapScanAt = Date.now()
 
-  const toProcess = gaps.slice(0, gapConfig.maxPerCycle)
-  console.log(`[gap-repair] Found ${gaps.length} gaps, processing ${toProcess.length}...`)
+  const start = nextBatchAfterContiguous(state.lastVerifiedContiguousBatch)
+  if (start > currentBatch) {
+    return
+  }
+
+  const pendingGapCount = db.getGapCount(start, currentBatch)
+  if (pendingGapCount === 0) {
+    state.lastVerifiedContiguousBatch = currentBatch
+    return
+  }
+
+  const toProcess = db.getUnindexedBatchesPage(start, currentBatch, gapConfig.maxPerCycle)
+  if (toProcess.length === 0) return
+
+  console.log(`[gap-repair] Found ${pendingGapCount} gaps after batch ${start - 1}, processing ${toProcess.length}...`)
 
   let repaired = 0
   for (const batch of toProcess) {
     if (!state.running) break
     try {
       await verifyBatch(batch, client)
-      repaired++
+      repaired += 1
     } catch (err) {
       console.warn(`[gap-repair] Failed batch ${batch}: ${err instanceof Error ? err.message : err}`)
     }
   }
 
+  advanceContiguousToUpperBound(db, currentBatch)
+
   state.gapRepairsCompleted += repaired
   if (repaired > 0) {
-    console.log(`[gap-repair] Repaired ${repaired}/${toProcess.length} gaps (${gaps.length - repaired} remaining)`)
+    const remaining = Math.max(0, db.getGapCount(nextBatchAfterContiguous(state.lastVerifiedContiguousBatch), currentBatch))
+    console.log(`[gap-repair] Repaired ${repaired}/${toProcess.length} gaps (${remaining} remaining)`)
+  }
+
+  if (deferredAggregatePairs.size > 0) {
+    scheduleDeferredAggregateFlush(0)
   }
 }
 
@@ -604,6 +972,9 @@ export async function getIndexerStatus() {
 
   return {
     lastProcessedBatch: state.lastProcessedBatch,
+    lastVerifiedContiguousBatch: state.lastVerifiedContiguousBatch,
+    lastLiveBlockSeen: state.lastLiveBlockSeen,
+    pendingLiveBlocks: state.pendingLiveBlocks,
     liveSubscriptionActive: state.liveSubscriptionActive,
     totalTransactionsIndexed,
     indexedBatchCount: db ? db.getIndexedBatchCount() : 0,
@@ -611,6 +982,7 @@ export async function getIndexerStatus() {
     backfillComplete: state.backfillComplete,
     skippedBatches: state.skippedBatches.length,
     gapRepairsCompleted: state.gapRepairsCompleted,
+    deferredAggregatePairs: deferredAggregatePairs.size,
     lastGapScanAt: state.lastGapScanAt || null,
   }
 }
@@ -632,7 +1004,7 @@ export async function getIndexerStatusWithProgress() {
   const db = indexerDb
   const indexedBatchCount = db ? db.getIndexedBatchCount() : 0
   const gapCount = db && state.lastProcessedBatch > 0
-    ? db.getUnindexedBatches(1, state.lastProcessedBatch).length
+    ? db.getGapCount(1, state.lastProcessedBatch)
     : 0
 
   // Query Neo4j for the real transaction count — SQLite tx_count sums are
@@ -649,12 +1021,16 @@ export async function getIndexerStatusWithProgress() {
     totalTransactionsIndexed = db ? db.getTotalTransactionsIndexed() : 0
   }
 
-  const progress = currentBatch > 0 && state.lastProcessedBatch >= 0
-    ? ((state.lastProcessedBatch / currentBatch) * 100).toFixed(1) + '%'
+  const verifiedForProgress = Math.max(0, state.lastVerifiedContiguousBatch)
+  const progress = currentBatch > 0
+    ? ((verifiedForProgress / currentBatch) * 100).toFixed(1) + '%'
     : 'unknown'
 
   return {
     lastProcessedBatch: state.lastProcessedBatch,
+    lastVerifiedContiguousBatch: state.lastVerifiedContiguousBatch,
+    lastLiveBlockSeen: state.lastLiveBlockSeen,
+    pendingLiveBlocks: state.pendingLiveBlocks,
     currentBatch,
     backfillProgress: progress,
     liveSubscriptionActive: state.liveSubscriptionActive,
@@ -665,6 +1041,7 @@ export async function getIndexerStatusWithProgress() {
     running: state.running,
     skippedBatches: state.skippedBatches.length,
     gapRepairsCompleted: state.gapRepairsCompleted,
+    deferredAggregatePairs: deferredAggregatePairs.size,
     lastGapScanAt: state.lastGapScanAt || null,
   }
 }
@@ -713,6 +1090,9 @@ export function startBlockchainIndexer(): { stop: () => Promise<void> } {
       console.log('[indexer] Stopping...')
       state.running = false
 
+      stopGapRepairLoop()
+      stopDeferredAggregateFlush()
+
       if (subscription) {
         try {
           subscription.close()
@@ -729,10 +1109,14 @@ export function startBlockchainIndexer(): { stop: () => Promise<void> } {
       }
 
       state.liveSubscriptionActive = false
+      state.lastProcessedBatch = -1
+      state.lastVerifiedContiguousBatch = -1
+      state.lastLiveBlockSeen = null
+      state.pendingLiveBlocks = 0
       state.lastGapScanAt = 0
       state.gapRepairsCompleted = 0
+      deferredAggregatePairs.clear()
       console.log('[indexer] Stopped')
     },
   }
 }
-

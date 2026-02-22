@@ -175,6 +175,25 @@ bun run dev
 | `BACKFILL_THROTTLE_MS` | — | `0` | Optional backfill sleep duration (ms) to reduce RPC pressure |
 | `BACKFILL_THROTTLE_EVERY_BATCHES` | — | `10` | Apply backfill throttle every N batches (when throttle > 0) |
 | `BACKFILL_DEFER_AGGREGATES` | — | `true` | Defer TRANSACTED_WITH aggregate updates until backfill completes |
+| `BACKFILL_RPC_PREFETCH` | — | `4` | Number of in-flight RPC batch fetches during backfill |
+| `GAP_REPAIR_INTERVAL_MS` | — | `300000` | Interval between background gap-repair cycles after backfill |
+| `GAP_REPAIR_MAX_PER_CYCLE` | — | `50` | Max missing batches verified per gap-repair cycle |
+| `LIVE_TRANSITION_GAP_BUDGET_MS` | — | `5000` | Per-macro-block time budget for strict contiguous verification |
+| `LIVE_DEFER_AGGREGATES` | — | `true` | Defer live block aggregate updates and flush them in the background queue |
+| `VERIFY_BATCH_DEFER_AGGREGATES` | — | `true` | Defer aggregate updates during gap verification and flush in smaller chunks |
+| `VERIFY_BATCH_AGGREGATE_PAIR_BATCH_SIZE` | — | `5` | Pairs attempted per deferred flush sub-batch before handing to aggregate updater |
+| `VERIFY_BATCH_AGGREGATE_FLUSH_LIMIT` | — | `50` | Max deferred pairs attempted per background flush cycle |
+| `VERIFY_BATCH_AGGREGATE_FLUSH_TICK_MS` | — | `1000` | Delay between deferred aggregate background flush cycles when queue is non-empty |
+| `EDGE_AGGREGATE_PAIR_CHUNK_SIZE` | — | `5` | Internal pair chunk size per Neo4j query in `updateEdgeAggregatesForPairs` |
+| `UPDATE_ADDRESS_TXCOUNT_ON_PAIR_UPDATE` | — | `false` | Whether live/gap per-pair updates recompute `Address.txCount` immediately |
+| `REBUILD_PHASE1_CHUNK_SIZE` | — | `1000` | Address chunk size for TRANSACTED_WITH rebuild phase |
+| `REBUILD_PHASE1_ROWS_PER_TX` | — | `250` | Rows per inner transaction for TRANSACTED_WITH rebuild phase |
+| `REBUILD_PHASE2_CHUNK_SIZE` | — | `1000` | Address chunk size for `Address.txCount` rebuild phase |
+| `REBUILD_PHASE2_ROWS_PER_TX` | — | `250` | Rows per inner transaction for `Address.txCount` rebuild phase |
+| `REBUILD_CHUNK_RETRY_ATTEMPTS` | — | `3` | Retry attempts per rebuild chunk on transient Neo4j failures |
+| `REBUILD_CHUNK_RETRY_BASE_DELAY_MS` | — | `2000` | Base backoff delay between rebuild chunk retries |
+| `REBUILD_CHUNK_RETRY_MAX_DELAY_MS` | — | `30000` | Max backoff delay between rebuild chunk retries |
+| `REBUILD_STRATEGY` | — | `keyset` | Aggregate rebuild mode (`keyset` default, optional `apoc` fallback) |
 | `API_KEY` | prod | — | Required for sensitive API routes from non-main origins |
 | `MAIN_ORIGIN_HOSTS` | — | `localhost,nimstalker.com,www.nimstalker.com` | Origins treated as first-party |
 | `SENSITIVE_RATE_LIMIT_WINDOW_MS` | — | `60000` | Rate-limit window for sensitive routes |

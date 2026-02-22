@@ -19,20 +19,27 @@ function getExtensionName(mode: string): string {
 }
 
 async function loadExtension(name: string): Promise<void> {
+  const resolveExtension = (mod: any) => {
+    if (typeof mod === 'function') return mod;
+    if (typeof mod?.default === 'function') return mod.default;
+    if (typeof mod?.default?.default === 'function') return mod.default.default;
+    throw new Error(`Failed to resolve Cytoscape extension "${name}"`);
+  };
+
   switch (name) {
     case 'cola': {
       const mod = await import('cytoscape-cola');
-      cytoscape.use(mod.default);
+      cytoscape.use(resolveExtension(mod));
       break;
     }
     case 'elk': {
       const mod = await import('cytoscape-elk');
-      cytoscape.use(mod.default);
+      cytoscape.use(resolveExtension(mod));
       break;
     }
     case 'dagre': {
       const mod = await import('cytoscape-dagre');
-      cytoscape.use(mod.default);
+      cytoscape.use(resolveExtension(mod));
       break;
     }
   }
@@ -52,10 +59,13 @@ export async function ensureLayoutRegistered(mode: string): Promise<void> {
     return loading.get(extName);
   }
 
-  const promise = loadExtension(extName).then(() => {
-    registered.add(extName);
-    loading.delete(extName);
-  });
+  const promise = loadExtension(extName)
+    .then(() => {
+      registered.add(extName);
+    })
+    .finally(() => {
+      loading.delete(extName);
+    });
 
   loading.set(extName, promise);
   return promise;

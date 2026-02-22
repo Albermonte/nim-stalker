@@ -28,7 +28,7 @@ export function getDriver(): Driver {
  * Execute a read transaction
  */
 export async function readTx<T>(work: (tx: ManagedTransaction) => Promise<T>): Promise<T> {
-  const session = getDriver().session();
+  const session = getDriver().session({ defaultAccessMode: neo4j.session.READ });
   try {
     return await session.executeRead(work);
   } finally {
