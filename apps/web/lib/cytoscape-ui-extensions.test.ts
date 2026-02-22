@@ -27,7 +27,7 @@ describe('cytoscape-ui-extensions', () => {
     expect(use).toHaveBeenCalledTimes(5);
   });
 
-  test('attachUiExtensions wires navigator, autopan and no-overlap', () => {
+  test('attachUiExtensions wires navigator and autopan without drag-blocking no-overlap', () => {
     const destroyNavigator = mock(() => {});
     const noOverlap = mock(() => {});
     const on = mock(() => {});
@@ -46,13 +46,13 @@ describe('cytoscape-ui-extensions', () => {
 
     expect(cy.navigator).toHaveBeenCalledTimes(1);
     expect(cy.autopanOnDrag).toHaveBeenCalledTimes(1);
-    expect(noOverlap).toHaveBeenCalledTimes(1);
-    expect(on).toHaveBeenCalledWith('add', 'node', expect.any(Function));
+    expect(noOverlap).not.toHaveBeenCalled();
+    expect(on).not.toHaveBeenCalled();
 
     cleanup();
 
     expect(destroyNavigator).toHaveBeenCalledTimes(1);
-    expect(off).toHaveBeenCalledWith('add', 'node', expect.any(Function));
+    expect(off).not.toHaveBeenCalled();
   });
 
   test('attachUiExtensions is safe when extension methods are unavailable', () => {

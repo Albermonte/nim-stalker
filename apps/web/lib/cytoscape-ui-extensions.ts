@@ -46,14 +46,6 @@ export function createFloatingUiPopperFactory() {
   };
 }
 
-function applyNoOverlap(cy: Core): void {
-  if (typeof (cy as any).nodes !== 'function') return;
-  const nodes = cy.nodes() as any;
-  if (nodes.length > 1 && typeof nodes.noOverlap === 'function') {
-    nodes.noOverlap({ padding: 12 });
-  }
-}
-
 export function registerUiExtensions(cytoscapeModule: CytoscapeLike, modules: UiExtensionModules): void {
   if (registered) return;
 
@@ -103,13 +95,6 @@ export function attachUiExtensions(
     if (autopan && typeof autopan.disable === 'function') {
       cleanupFns.push(() => autopan.disable());
     }
-  }
-
-  const reapplyNoOverlap = () => applyNoOverlap(cy);
-  reapplyNoOverlap();
-  if (typeof (cy as any).on === 'function' && typeof (cy as any).off === 'function') {
-    cy.on('add', 'node', reapplyNoOverlap);
-    cleanupFns.push(() => cy.off('add', 'node', reapplyNoOverlap));
   }
 
   return () => {
