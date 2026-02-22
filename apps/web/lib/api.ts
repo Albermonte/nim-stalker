@@ -212,6 +212,7 @@ export class ApiClient {
       maxValue: options?.maxValue,
     });
     const query = params.toString();
+    const normalizedAddress = address.replace(/\s/g, '').toUpperCase();
     return this.fetch<{
       data: Array<{
         hash: string;
@@ -227,7 +228,7 @@ export class ApiClient {
       page: number;
       pageSize: number;
       hasMore: boolean;
-    }>(`/address/${encodeURIComponent(address)}/transactions${query ? `?${query}` : ''}`);
+    }>(`/address/${encodeURIComponent(normalizedAddress)}/transactions${query ? `?${query}` : ''}`);
   }
 
   async expandGraph(

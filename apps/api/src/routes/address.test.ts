@@ -101,5 +101,78 @@ describe('GET /address/:addr/transactions', () => {
       expect(query).not.toContain('NULLS LAST');
     }
   });
-});
 
+  test('uses block-window fast path for high-volume addresses (direction=both, no filters)', async () => {
+    const capturedQueries: string[] = [];
+    const capturedParams: Array<Record<string, unknown> | undefined> = [];
+
+    mockRun.mockImplementation((query: string, params?: Record<string, unknown>) => {
+      capturedQueries.push(query);
+      capturedParams.push(params);
+
+      if (query.includes('RETURN a.txCount AS total')) {
+        return Promise.resolve({
+          records: [{
+            get: (key: string) => key === 'total' ? 100_000 : null,
+          }],
+        });
+      }
+
+      if (query.includes('max(t.blockNumber) AS maxBlock')) {
+        return Promise.resolve({
+          records: [{
+            get: (key: string) => key === 'maxBlock' ? 500_000 : null,
+          }],
+        });
+      }
+
+      if (query.includes('WHERE t.blockNumber >= $minBlock AND t.blockNumber <= $maxBlock')) {
+        return Promise.resolve({
+          records: Array.from({ length: 50 }, (_, i) => ({
+            get: (key: string) => {
+              const data: Record<string, unknown> = {
+                hash: `hash-${i}`,
+                fromId: validAddresses.basic,
+                toId: validAddresses.noSpaces,
+                value: '100000',
+                fee: '1000',
+                blockNumber: 500_000 - i,
+                timestamp: '2024-01-01T00:00:00.000Z',
+                data: null,
+              };
+              return data[key] ?? null;
+            },
+          })),
+        });
+      }
+
+      // Any fallback query still returns a valid empty shape, but this test asserts it was not used.
+      return Promise.resolve({ records: [] });
+    });
+
+    const response = await app.handle(
+      new Request(
+        `http://localhost/address/${encodeURIComponent(validAddresses.basic)}/transactions?direction=both&page=1&pageSize=50`
+      )
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(Array.isArray(body.data)).toBe(true);
+    expect(body.data.length).toBe(50);
+
+    expect(capturedQueries.some((q) => q.includes('RETURN a.txCount AS total'))).toBe(true);
+    expect(capturedQueries.some((q) => q.includes('max(t.blockNumber) AS maxBlock'))).toBe(true);
+    expect(capturedQueries.some((q) => q.includes('WHERE t.blockNumber >= $minBlock AND t.blockNumber <= $maxBlock'))).toBe(true);
+    expect(capturedQueries.some((q) => q.includes('ORDER BY t.timestamp DESC') && q.includes('SKIP $skip LIMIT $limit'))).toBe(false);
+
+    const windowQueryIndex = capturedQueries.findIndex((q) =>
+      q.includes('WHERE t.blockNumber >= $minBlock AND t.blockNumber <= $maxBlock')
+    );
+    expect(windowQueryIndex).toBeGreaterThan(-1);
+
+    const windowParams = capturedParams[windowQueryIndex];
+    expect(windowParams).toBeDefined();
+    expect(windowParams).toHaveProperty('requestedRows');
+  });
+});

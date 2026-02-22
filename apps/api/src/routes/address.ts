@@ -190,17 +190,72 @@ export const addressRoutes = new Elysia({ prefix: '/address' })
             total = toNumber(countResult.records[0]?.get('total'));
           }
 
-          const dataResult = await tx.run(
-            `${matchClause}${whereExtra}
-             RETURN t.hash AS hash, ${returnFromTo},
-                    t.value AS value, t.fee AS fee, t.blockNumber AS blockNumber,
-                    t.timestamp AS timestamp, t.data AS data
-             ORDER BY t.timestamp DESC
-             SKIP $skip LIMIT $limit`,
-            params
-          );
+          // For very high-volume addresses, ordering all adjacent relationships by timestamp
+          // can exceed request timeouts. Use an indexed block-range probe and expand until
+          // enough rows are collected for the requested page.
+          const HIGH_VOLUME_TXCOUNT_THRESHOLD = 50_000;
+          const INITIAL_BLOCK_WINDOW = 131_072;
+          const MAX_BLOCK_WINDOW_EXPANSIONS = 10;
 
-          return { totalResult: total, txResult: dataResult.records };
+          let txRecords: neo4j.Record[] | null = null;
+          if (canUseStoredCount && total >= HIGH_VOLUME_TXCOUNT_THRESHOLD) {
+            const maxBlockResult = await tx.run(
+              `MATCH ()-[t:TRANSACTION]->() RETURN max(t.blockNumber) AS maxBlock`
+            );
+            const maxBlock = toNumber(maxBlockResult.records[0]?.get('maxBlock'));
+
+            if (maxBlock > 0) {
+              const requestedRows = page * pageSize;
+              let window = INITIAL_BLOCK_WINDOW;
+
+              for (let i = 0; i < MAX_BLOCK_WINDOW_EXPANSIONS; i += 1) {
+                const minBlock = Math.max(0, maxBlock - window + 1);
+                const windowResult = await tx.run(
+                  `MATCH ()-[t:TRANSACTION]->()
+                   WHERE t.blockNumber >= $minBlock AND t.blockNumber <= $maxBlock
+                   WITH t
+                   WHERE startNode(t).id = $addr OR endNode(t).id = $addr
+                   RETURN t.hash AS hash, startNode(t).id AS fromId, endNode(t).id AS toId,
+                          t.value AS value, t.fee AS fee, t.blockNumber AS blockNumber,
+                          t.timestamp AS timestamp, t.data AS data
+                   ORDER BY t.blockNumber DESC, t.timestamp DESC
+                   LIMIT $requestedRows`,
+                  {
+                    addr: formattedAddr,
+                    minBlock: neo4j.int(minBlock),
+                    maxBlock: neo4j.int(maxBlock),
+                    requestedRows: neo4j.int(requestedRows),
+                  }
+                );
+
+                if (windowResult.records.length >= requestedRows || minBlock === 0) {
+                  txRecords = windowResult.records;
+                  break;
+                }
+
+                window *= 2;
+              }
+            }
+          }
+
+          if (!txRecords) {
+            const dataResult = await tx.run(
+              `${matchClause}${whereExtra}
+               RETURN t.hash AS hash, ${returnFromTo},
+                      t.value AS value, t.fee AS fee, t.blockNumber AS blockNumber,
+                      t.timestamp AS timestamp, t.data AS data
+               ORDER BY t.timestamp DESC
+               SKIP $skip LIMIT $limit`,
+              params
+            );
+            txRecords = dataResult.records;
+          } else {
+            const start = (page - 1) * pageSize;
+            const end = start + pageSize;
+            txRecords = txRecords.slice(start, end);
+          }
+
+          return { totalResult: total, txResult: txRecords };
         });
 
         return {
