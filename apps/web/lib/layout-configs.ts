@@ -342,3 +342,20 @@ export function getLayoutLabel(mode: LayoutMode): string {
   }
   return mode;
 }
+
+/**
+ * Deterministic positions for tiny path graphs (2 nodes).
+ * Keeps start above end to avoid unstable force-layout results on first load.
+ */
+export function computeTinyPathPositions(
+  orderedNodeIds: string[],
+  verticalSpacing = 420
+): Map<string, { x: number; y: number }> {
+  const positions = new Map<string, { x: number; y: number }>();
+  if (orderedNodeIds.length < 2) return positions;
+
+  const half = verticalSpacing / 2;
+  positions.set(orderedNodeIds[0], { x: 0, y: -half });
+  positions.set(orderedNodeIds[orderedNodeIds.length - 1], { x: 0, y: half });
+  return positions;
+}

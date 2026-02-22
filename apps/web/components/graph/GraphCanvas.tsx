@@ -13,7 +13,13 @@ import {
   moveNeighborsByDelta,
   shouldEnableCompoundDrag,
 } from './drag-utils';
-import { getLayoutOptions, getPathLayoutOptions, getIncrementalLayoutOptions, getIncrementalOptionsForMode } from '@/lib/layout-configs';
+import {
+  computeTinyPathPositions,
+  getLayoutOptions,
+  getPathLayoutOptions,
+  getIncrementalLayoutOptions,
+  getIncrementalOptionsForMode,
+} from '@/lib/layout-configs';
 import { ensureLayoutRegistered } from '@/lib/layout-loader';
 import { computeDirectedFlowPositions, computeIncrementalDirectedFlow } from '@/lib/layout-directed-flow';
 import { computeBiFlowPositions } from '@/lib/layout-biflow';
@@ -726,7 +732,26 @@ export function GraphCanvas() {
         const freshNodeCount = cy.nodes().length;
 
         if (pathView.active) {
-          // Path view: full layout without constraints for optimal linear arrangement
+          // Path view: for tiny 2-node paths, force deterministic vertical positions.
+          if (freshNodeCount === 2 && pathView.pathNodeOrder.length >= 2) {
+            const positions = computeTinyPathPositions(pathView.pathNodeOrder);
+            cy.nodes().forEach((n) => {
+              const pos = positions.get(n.id());
+              if (pos) n.scratch('_tinyPathPos', pos);
+            });
+            const layout = cy.layout({
+              name: 'preset',
+              fit: true,
+              padding: 140,
+              animate: true,
+              animationDuration: 300,
+              positions: (node: any) => node.scratch('_tinyPathPos') || node.position(),
+            } as any);
+            trackAndRun(layout);
+            return;
+          }
+
+          // Larger path views still use tuned fCoSE.
           const layout = cy.layout(getPathLayoutOptions() as any);
           trackAndRun(layout);
         } else if (layoutMode.startsWith('biflow-')) {
@@ -993,6 +1018,18 @@ export function GraphCanvas() {
       pathView.pathEdgeIds.forEach((edgeId) => {
         cy.getElementById(edgeId).addClass('path-edge');
       });
+    }
+
+    // Stabilize 2-node path views on initial load: force deterministic vertical positions.
+    if (pathView.active && pathView.pathNodeOrder.length >= 2 && cy.nodes().length === 2) {
+      const positions = computeTinyPathPositions(pathView.pathNodeOrder);
+      cy.batch(() => {
+        cy.nodes().forEach((n) => {
+          const pos = positions.get(n.id());
+          if (pos) n.position(pos);
+        });
+      });
+      cy.fit(cy.nodes(), 140);
     }
 
     prevNodeCountRef.current = currentNodeCount;

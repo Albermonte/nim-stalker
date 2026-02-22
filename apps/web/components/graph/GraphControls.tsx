@@ -50,6 +50,56 @@ export function GraphControls() {
     }
   }, [pathView.active, pathView.stats, pathView.pathNodeOrder]);
 
+  const layoutSelector = (
+    <div className="nq-card py-2 px-3 text-xs w-48" ref={layoutPanelRef}>
+      <div className="nq-label mb-1">Layout: {getLayoutLabel(layoutMode)}</div>
+      <div className="space-y-0.5">
+        {LAYOUT_CATEGORIES.map((cat) => {
+          const isExpanded = expandedCategory === cat.id;
+          const hasActive = cat.layouts.some((l) => l.id === layoutMode);
+          return (
+            <div key={cat.id}>
+              <button
+                onClick={() => setExpandedCategory(isExpanded ? null : cat.id)}
+                className={`w-full flex items-center justify-between py-1 px-1 font-bold uppercase tracking-wide text-xs transition-colors rounded-sm ${
+                  hasActive ? 'text-nq-pink' : ''
+                } hover:bg-gray-50`}
+              >
+                <span>{cat.label}</span>
+                <span className="text-[10px]">{isExpanded ? '▾' : '▸'}</span>
+              </button>
+              {isExpanded && (
+                <div className="ml-2 space-y-0.5">
+                  {cat.layouts.map((layout) => {
+                    const isActive = layoutMode === layout.id;
+                    return (
+                      <button
+                        key={layout.id}
+                        onClick={() => {
+                          setLayoutMode(layout.id);
+                        }}
+                        className={`w-full text-left py-1 px-2 rounded-sm transition-colors ${
+                          isActive
+                            ? 'bg-nq-pink text-white font-bold'
+                            : 'hover:bg-gray-50'
+                        }`}
+                      >
+                        <div className="font-bold uppercase tracking-wide">{layout.label}</div>
+                        <div className={`text-[10px] ${isActive ? 'text-white opacity-80' : 'opacity-50'}`}>
+                          {layout.description}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
   return (
     <div className="absolute top-4 right-4 flex flex-col gap-2">
       {/* Path View Banner */}
@@ -77,6 +127,9 @@ export function GraphControls() {
         </div>
       )}
 
+      {/* Layout Selector Accordion */}
+      {pathView.active && layoutSelector}
+
       {!pathView.active && (
         <>
           <button
@@ -96,54 +149,7 @@ export function GraphControls() {
             Clear
           </button>
 
-          {/* Layout Selector Accordion */}
-          <div className="nq-card py-2 px-3 text-xs w-48" ref={layoutPanelRef}>
-            <div className="nq-label mb-1">Layout: {getLayoutLabel(layoutMode)}</div>
-            <div className="space-y-0.5">
-              {LAYOUT_CATEGORIES.map((cat) => {
-                const isExpanded = expandedCategory === cat.id;
-                const hasActive = cat.layouts.some((l) => l.id === layoutMode);
-                return (
-                  <div key={cat.id}>
-                    <button
-                      onClick={() => setExpandedCategory(isExpanded ? null : cat.id)}
-                      className={`w-full flex items-center justify-between py-1 px-1 font-bold uppercase tracking-wide text-xs transition-colors rounded-sm ${
-                        hasActive ? 'text-nq-pink' : ''
-                      } hover:bg-gray-50`}
-                    >
-                      <span>{cat.label}</span>
-                      <span className="text-[10px]">{isExpanded ? '▾' : '▸'}</span>
-                    </button>
-                    {isExpanded && (
-                      <div className="ml-2 space-y-0.5">
-                        {cat.layouts.map((layout) => {
-                          const isActive = layoutMode === layout.id;
-                          return (
-                            <button
-                              key={layout.id}
-                              onClick={() => {
-                                setLayoutMode(layout.id);
-                              }}
-                              className={`w-full text-left py-1 px-2 rounded-sm transition-colors ${
-                                isActive
-                                  ? 'bg-nq-pink text-white font-bold'
-                                  : 'hover:bg-gray-50'
-                              }`}
-                            >
-                              <div className="font-bold uppercase tracking-wide">{layout.label}</div>
-                              <div className={`text-[10px] ${isActive ? 'text-white opacity-80' : 'opacity-50'}`}>
-                                {layout.description}
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          {layoutSelector}
 
           <button
             onClick={() => setPathMode(!pathMode.active)}

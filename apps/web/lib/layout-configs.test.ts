@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { findLayoutCategory, getLayoutLabel, getLayoutOptions } from './layout-configs';
+import { computeTinyPathPositions, findLayoutCategory, getLayoutLabel, getLayoutOptions } from './layout-configs';
 
 describe('layout-configs additional layouts', () => {
   test('fcose-weighted uses fcose with a functional idealEdgeLength', () => {
@@ -31,5 +31,17 @@ describe('layout-configs additional layouts', () => {
     expect(getLayoutLabel('concentric-volume' as any)).toBe('Concentric (Volume)');
 
     expect(findLayoutCategory('biflow-lr' as any)?.id).toBe('flow');
+  });
+
+  test('computeTinyPathPositions returns deterministic vertical positions for 2-node path', () => {
+    const positions = computeTinyPathPositions(['A', 'B']);
+
+    expect(positions.get('A')).toEqual({ x: 0, y: -210 });
+    expect(positions.get('B')).toEqual({ x: 0, y: 210 });
+  });
+
+  test('computeTinyPathPositions returns empty map for fewer than 2 nodes', () => {
+    expect(computeTinyPathPositions([]).size).toBe(0);
+    expect(computeTinyPathPositions(['A']).size).toBe(0);
   });
 });
