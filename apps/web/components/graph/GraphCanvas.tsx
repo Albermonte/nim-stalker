@@ -20,6 +20,7 @@ import {
   getIncrementalLayoutOptions,
   getIncrementalOptionsForMode,
 } from '@/lib/layout-configs';
+import { formatNimiq } from '@/lib/format-utils';
 import { ensureLayoutRegistered } from '@/lib/layout-loader';
 import { computeDirectedFlowPositions, computeIncrementalDirectedFlow } from '@/lib/layout-directed-flow';
 import { computeBiFlowPositions } from '@/lib/layout-biflow';
@@ -27,6 +28,7 @@ import { identiconManager } from '@/lib/identicon-manager';
 import { computeGraphHash, saveLayoutPositions, getLayoutPositions } from '@/lib/layout-cache';
 import { registerUiExtensions, attachUiExtensions } from '@/lib/cytoscape-ui-extensions';
 import { CYTOSCAPE_UI_EXTENSION_MODULES } from '@/lib/cytoscape-ui-extension-modules';
+import { getConnectedTxActivity } from './tooltip-utils';
 
 // Register default layout statically (always needed)
 cytoscape.use(fcose);
@@ -158,9 +160,10 @@ interface NodeTooltipProps {
   x: number;
   y: number;
   nodesMap: Map<string, CytoscapeNode>;
+  edgesMap: Map<string, CytoscapeEdge>;
 }
 
-function NodeTooltip({ visible, nodeId, x, y, nodesMap }: NodeTooltipProps) {
+function NodeTooltip({ visible, nodeId, x, y, nodesMap, edgesMap }: NodeTooltipProps) {
   if (!visible || !nodeId) return null;
 
   const nodeData = nodesMap.get(nodeId)?.data;
@@ -175,19 +178,32 @@ function NodeTooltip({ visible, nodeId, x, y, nodesMap }: NodeTooltipProps) {
         transform: 'translateX(-50%)',
       }}
     >
-      {renderTooltipContent(nodeData)}
+      {renderTooltipContent(nodeData, nodeId, edgesMap)}
     </div>
   );
 }
 
-function renderTooltipContent(nodeData: NodeData): JSX.Element {
+function renderTooltipContent(
+  nodeData: NodeData,
+  nodeId: string,
+  edgesMap: Map<string, CytoscapeEdge>
+): JSX.Element {
   switch (nodeData.indexStatus) {
-    case 'PENDING':
+    case 'PENDING': {
+      const recentActivity = getConnectedTxActivity(nodeId, edgesMap);
+      if (recentActivity) {
+        return (
+          <span className="font-bold uppercase tracking-wide text-nq-periwinkle">
+            {formatNimiq(recentActivity.totalValue)} · {recentActivity.txCount.toLocaleString()} TX
+          </span>
+        );
+      }
       return (
         <span className="font-bold uppercase tracking-wide text-nq-periwinkle">
           Not indexed
         </span>
       );
+    }
     case 'INDEXING':
       return (
         <span className="font-bold uppercase tracking-wide flex items-center gap-2 text-nq-yellow">
@@ -1087,6 +1103,7 @@ export function GraphCanvas() {
         x={tooltip.x}
         y={tooltip.y}
         nodesMap={nodesMap}
+        edgesMap={edgesMap}
       />
       <EdgeTooltip
         visible={edgeTooltip.visible}

@@ -2,6 +2,7 @@
 
 import { Suspense } from 'react';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import { SearchPanel } from '@/components/sidebar/SearchPanel';
 import { FilterPanel } from '@/components/sidebar/FilterPanel';
 import { DetailsPanel } from '@/components/sidebar/DetailsPanel';
@@ -32,10 +33,15 @@ export function GraphShell() {
       <aside className="sidebar w-80 flex flex-col">
         {/* Header */}
         <div className="p-4 border-b-3 border-nq-black bg-nq-pink text-nq-white">
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <span className="text-nq-yellow">✦</span>
-            NIM STALKER
-            <span className="text-nq-yellow">✦</span>
+          <h1 className="text-2xl font-bold tracking-tight">
+            <Link
+              href="/"
+              className="inline-flex items-center gap-2 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-nq-yellow focus-visible:ring-offset-2 focus-visible:ring-offset-nq-pink"
+            >
+              <span className="text-nq-yellow">✦</span>
+              NIM STALKER
+              <span className="text-nq-yellow">✦</span>
+            </Link>
           </h1>
           <p className="text-sm uppercase tracking-wider opacity-90">Making Blockchain Gossip Visual ✨</p>
         </div>
