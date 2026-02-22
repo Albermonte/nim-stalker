@@ -8,6 +8,11 @@ import { type CytoscapeNode, type CytoscapeEdge, type NodeData } from '@nim-stal
 import { useGraphStore } from '@/store/graph-store';
 import { NodeContextMenu } from './NodeContextMenu';
 import { bindCyEvents } from './graph-events';
+import {
+  getExclusiveNeighbors,
+  moveNeighborsByDelta,
+  shouldEnableCompoundDrag,
+} from './drag-utils';
 import { getLayoutOptions, getPathLayoutOptions, getIncrementalLayoutOptions, getIncrementalOptionsForMode } from '@/lib/layout-configs';
 import { ensureLayoutRegistered } from '@/lib/layout-loader';
 import { computeDirectedFlowPositions, computeIncrementalDirectedFlow } from '@/lib/layout-directed-flow';
@@ -237,19 +242,6 @@ function EdgeTooltip({ visible, edgeId, x, y, edgesMap }: EdgeTooltipProps) {
   );
 }
 
-// Helper to find nodes that are ONLY connected to the dragged node
-function getExclusiveNeighbors(cy: Core, nodeId: string) {
-  const node = cy.getElementById(nodeId);
-  const neighbors = node.neighborhood('node');
-
-  // Filter neighbors that have no other connections besides the dragged node
-  return neighbors.filter((neighbor) => {
-    const neighborConnections = neighbor.neighborhood('node');
-    // If neighbor only connects to the dragged node, it's exclusive
-    return neighborConnections.length === 1 && neighborConnections[0].id() === nodeId;
-  });
-}
-
 export function GraphCanvas() {
   const cyRef = useRef<Core | null>(null);
   const [cyInstance, setCyInstance] = useState<Core | null>(null);
@@ -419,28 +411,28 @@ export function GraphCanvas() {
       },
       onGrabNode: (evt) => {
         const node = evt.target;
+        const exclusiveNeighbors = getExclusiveNeighbors(cy, node.id());
+
+        if (!shouldEnableCompoundDrag(exclusiveNeighbors.length)) {
+          dragStartPosRef.current = null;
+          exclusiveNeighborsRef.current = null;
+          return;
+        }
+
         const pos = node.position();
         dragStartPosRef.current = { x: pos.x, y: pos.y };
-        exclusiveNeighborsRef.current = getExclusiveNeighbors(cy, node.id());
+        exclusiveNeighborsRef.current = exclusiveNeighbors;
       },
       onDragNode: (evt) => {
+        if (!dragStartPosRef.current || !exclusiveNeighborsRef.current) return;
+
         const node = evt.target;
         const currentPos = node.position();
+        const deltaX = currentPos.x - dragStartPosRef.current.x;
+        const deltaY = currentPos.y - dragStartPosRef.current.y;
 
-        if (dragStartPosRef.current && exclusiveNeighborsRef.current) {
-          const deltaX = currentPos.x - dragStartPosRef.current.x;
-          const deltaY = currentPos.y - dragStartPosRef.current.y;
-
-          exclusiveNeighborsRef.current.forEach((neighbor) => {
-            const neighborPos = neighbor.position();
-            neighbor.position({
-              x: neighborPos.x + deltaX,
-              y: neighborPos.y + deltaY,
-            });
-          });
-
-          dragStartPosRef.current = { x: currentPos.x, y: currentPos.y };
-        }
+        moveNeighborsByDelta(cy, exclusiveNeighborsRef.current, deltaX, deltaY);
+        dragStartPosRef.current = { x: currentPos.x, y: currentPos.y };
       },
       onFreeNode: () => {
         dragStartPosRef.current = null;
