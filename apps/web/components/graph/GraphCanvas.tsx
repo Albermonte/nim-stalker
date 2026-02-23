@@ -25,6 +25,7 @@ import { computeDirectedFlowPositions, computeIncrementalDirectedFlow } from '@/
 import { computeBiFlowPositions } from '@/lib/layout-biflow';
 import { identiconManager } from '@/lib/identicon-manager';
 import { computeGraphHash, saveLayoutPositions, getLayoutPositions } from '@/lib/layout-cache';
+import { getPathViewLayoutStrategy } from '@/lib/path-view-layout-strategy';
 import { registerUiExtensions, attachUiExtensions } from '@/lib/cytoscape-ui-extensions';
 import { CYTOSCAPE_UI_EXTENSION_MODULES } from '@/lib/cytoscape-ui-extension-modules';
 import { formatTooltipBalance, getNodeTxCount } from './tooltip-utils';
@@ -723,28 +724,34 @@ export function GraphCanvas() {
 
         // Re-read node count at execution time (not capture time) for accurate adaptive config
         const freshNodeCount = cy.nodes().length;
+        const pathLayoutStrategy = getPathViewLayoutStrategy({
+          pathViewActive: pathView.active,
+          nodeCount: freshNodeCount,
+          pathNodeOrderLength: pathView.pathNodeOrder.length,
+          layoutMode,
+        });
 
-        if (pathView.active) {
-          // Path view: for tiny 2-node paths, force deterministic vertical positions.
-          if (freshNodeCount === 2 && pathView.pathNodeOrder.length >= 2) {
-            const positions = computeTinyPathPositions(pathView.pathNodeOrder);
-            cy.nodes().forEach((n) => {
-              const pos = positions.get(n.id());
-              if (pos) n.scratch('_tinyPathPos', pos);
-            });
-            const layout = cy.layout({
-              name: 'preset',
-              fit: true,
-              padding: 140,
-              animate: true,
-              animationDuration: 300,
-              positions: (node: any) => node.scratch('_tinyPathPos') || node.position(),
-            } as any);
-            trackAndRun(layout);
-            return;
-          }
+        if (pathLayoutStrategy === 'tiny') {
+          // Path view tiny-path override: force deterministic vertical positions.
+          const positions = computeTinyPathPositions(pathView.pathNodeOrder);
+          cy.nodes().forEach((n) => {
+            const pos = positions.get(n.id());
+            if (pos) n.scratch('_tinyPathPos', pos);
+          });
+          const layout = cy.layout({
+            name: 'preset',
+            fit: true,
+            padding: 140,
+            animate: true,
+            animationDuration: 300,
+            positions: (node: any) => node.scratch('_tinyPathPos') || node.position(),
+          } as any);
+          trackAndRun(layout);
+          return;
+        }
 
-          // Larger path views still use tuned fCoSE.
+        if (pathLayoutStrategy === 'path-fcose') {
+          // Path view + fCoSE keeps the tuned path configuration for readability.
           const layout = cy.layout(getPathLayoutOptions() as any);
           trackAndRun(layout);
         } else if (layoutMode.startsWith('biflow-')) {
@@ -799,7 +806,13 @@ export function GraphCanvas() {
         } else if (layoutMode === 'concentric-volume') {
           const layout = cy.layout(getLayoutOptions('concentric-volume', freshNodeCount) as any);
           trackAndRun(layout);
-        } else if (existingNodeIds.size > 0 && nodesToAdd.length > 0 && layoutMode === 'directed-flow' && lastExpandedNodeId) {
+        } else if (
+          !pathView.active
+          && existingNodeIds.size > 0
+          && nodesToAdd.length > 0
+          && layoutMode === 'directed-flow'
+          && lastExpandedNodeId
+        ) {
           // Directed-flow incremental: compute positions for new nodes using directed BFS
           const newNodeIdSet = new Set(nodesToAdd.map(n => n.data.id));
           const allCyNodes = cy.nodes().map((n) => ({ id: n.id() }));
@@ -832,6 +845,7 @@ export function GraphCanvas() {
             trackAndRun(layout);
           }
         } else if (
+          !pathView.active &&
           existingNodeIds.size > 0
           && nodesToAdd.length > 0
           && !layoutMode.startsWith('elk-')
