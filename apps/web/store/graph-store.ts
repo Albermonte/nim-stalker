@@ -22,6 +22,16 @@ export type LayoutMode =
   | 'biflow-lr' | 'biflow-tb'
   | 'concentric-volume';
 
+const LIVE_BALANCE_BATCH_SIZE = 100;
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
 interface GraphState {
   nodes: Map<string, CytoscapeNode>;
   edges: Map<string, CytoscapeEdge>;
@@ -60,6 +70,8 @@ interface GraphState {
   layoutMode: LayoutMode;
   /** When true, loadInitialData() is skipped (deep link pages set this) */
   skipInitialLoad: boolean;
+  /** Addresses already synced via live balance endpoint in this session */
+  balanceSyncedIds: Set<string>;
 }
 
 interface GraphActions {
@@ -92,6 +104,7 @@ interface GraphActions {
   clearLastExpanded: () => void;
   loadInitialData: () => Promise<void>;
   expandAllNodes: () => Promise<void>;
+  refreshBalancesForAddresses: (addresses: string[], options?: { force?: boolean }) => Promise<void>;
   /** Set layout mode */
   setLayoutMode: (mode: LayoutMode) => void;
   /** Set skipInitialLoad flag (used by deep link pages) */
@@ -128,6 +141,7 @@ const initialState: GraphState = {
   },
   layoutMode: 'fcose',
   skipInitialLoad: false,
+  balanceSyncedIds: new Set(),
 };
 
 export const useGraphStore = create<GraphState & GraphActions>()(
@@ -187,6 +201,8 @@ export const useGraphStore = create<GraphState & GraphActions>()(
       const state = get();
       const newNodes = new Map(state.nodes);
       newNodes.delete(id);
+      const newBalanceSyncedIds = new Set(state.balanceSyncedIds);
+      newBalanceSyncedIds.delete(id);
 
       // Remove edges connected to this node
       const newEdges = new Map(state.edges);
@@ -200,6 +216,7 @@ export const useGraphStore = create<GraphState & GraphActions>()(
         nodes: newNodes,
         edges: newEdges,
         selectedNodeId: state.selectedNodeId === id ? null : state.selectedNodeId,
+        balanceSyncedIds: newBalanceSyncedIds,
       });
     },
 
@@ -381,6 +398,65 @@ export const useGraphStore = create<GraphState & GraphActions>()(
       }
     },
 
+    refreshBalancesForAddresses: async (addresses, options) => {
+      if (addresses.length === 0) return;
+
+      const force = options?.force === true;
+      const state = get();
+      const uniqueAddresses = Array.from(new Set(addresses.map(formatNimiqAddress)));
+      const candidates = uniqueAddresses.filter((id) => {
+        if (!state.nodes.has(id)) return false;
+        return force || !state.balanceSyncedIds.has(id);
+      });
+
+      if (candidates.length === 0) return;
+
+      const batches = chunkArray(candidates, LIVE_BALANCE_BATCH_SIZE);
+
+      for (const batch of batches) {
+        try {
+          const result = await api.getLiveBalances(batch);
+
+          if (result.balances.length > 0) {
+            const current = get();
+            const newNodes = new Map(current.nodes);
+            const newBalanceSyncedIds = new Set(current.balanceSyncedIds);
+
+            for (const entry of result.balances) {
+              const existing = newNodes.get(entry.id);
+              if (!existing) continue;
+
+              newNodes.set(entry.id, {
+                ...existing,
+                data: {
+                  ...existing.data,
+                  balance: entry.balance,
+                  type: entry.type as NodeData['type'],
+                },
+              });
+              newBalanceSyncedIds.add(entry.id);
+            }
+
+            set({
+              nodes: newNodes,
+              balanceSyncedIds: newBalanceSyncedIds,
+            });
+          }
+
+          if (result.failed.length > 0) {
+            console.warn('[graph-store] Failed to refresh live balances', {
+              failed: result.failed,
+            });
+          }
+        } catch (err) {
+          console.warn('[graph-store] Failed to fetch live balances', {
+            error: err instanceof Error ? err.message : String(err),
+            batchSize: batch.length,
+          });
+        }
+      }
+    },
+
     findPath: async (from, to, maxHops) => {
       const hops = maxHops ?? get().pathMode.maxHops;
       const directed = get().pathMode.directed;
@@ -456,6 +532,7 @@ export const useGraphStore = create<GraphState & GraphActions>()(
         selectedEdgeId: null,
         lastExpandedNodeId: null,
         skipInitialLoad: false,
+        balanceSyncedIds: new Set(),
         pathMode: { active: false, from: null, to: null, maxHops: 3, directed: false },
         pathView: {
           active: false,

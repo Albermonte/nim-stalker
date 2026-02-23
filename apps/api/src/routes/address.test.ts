@@ -216,3 +216,106 @@ describe('GET /address/:addr', () => {
     expect(body).not.toHaveProperty('indexedAt');
   });
 });
+
+describe('POST /address/balances/live', () => {
+  beforeEach(() => {
+    mockRun.mockClear();
+    mockGetAccount.mockClear();
+  });
+
+  test('returns live balances and persists successful entries', async () => {
+    mockGetAccount.mockImplementation((addr: string) =>
+      Promise.resolve({
+        address: addr,
+        balance: addr === validAddresses.address1 ? 111 : 222,
+        type: addr === validAddresses.address1 ? 'BASIC' : 'VESTING',
+      })
+    );
+
+    const response = await app.handle(
+      new Request('http://localhost/address/balances/live', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          addresses: [validAddresses.address1, validAddresses.address2],
+        }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual({
+      balances: expect.arrayContaining([
+        { id: validAddresses.address1, balance: '111', type: 'BASIC' },
+        { id: validAddresses.address2, balance: '222', type: 'VESTING' },
+      ]),
+      failed: [],
+    });
+
+    const writeCall = mockRun.mock.calls.find(([query]) =>
+      typeof query === 'string' && query.includes('UNWIND $entries AS entry')
+    );
+    expect(writeCall).toBeDefined();
+    expect(writeCall?.[1]).toEqual({
+      entries: expect.arrayContaining([
+        { id: validAddresses.address1, balance: '111', type: 'BASIC' },
+        { id: validAddresses.address2, balance: '222', type: 'VESTING' },
+      ]),
+    });
+  });
+
+  test('returns partial failures and still persists successful entries', async () => {
+    mockGetAccount.mockImplementation((addr: string) => {
+      if (addr === validAddresses.address2) {
+        return Promise.reject(new Error('rpc down'));
+      }
+      return Promise.resolve({
+        address: addr,
+        balance: 333,
+        type: 'BASIC',
+      });
+    });
+
+    const response = await app.handle(
+      new Request('http://localhost/address/balances/live', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          addresses: [validAddresses.address1, validAddresses.address2],
+        }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual({
+      balances: [{ id: validAddresses.address1, balance: '333', type: 'BASIC' }],
+      failed: [validAddresses.address2],
+    });
+
+    const writeCall = mockRun.mock.calls.find(([query]) =>
+      typeof query === 'string' && query.includes('UNWIND $entries AS entry')
+    );
+    expect(writeCall).toBeDefined();
+    expect(writeCall?.[1]).toEqual({
+      entries: [{ id: validAddresses.address1, balance: '333', type: 'BASIC' }],
+    });
+  });
+
+  test('rejects invalid address input', async () => {
+    const response = await app.handle(
+      new Request('http://localhost/address/balances/live', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          addresses: [validAddresses.address1, 'NOT-AN-ADDRESS'],
+        }),
+      })
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body).toHaveProperty('error', 'Invalid address format');
+    expect(body).toHaveProperty('invalidAddresses');
+  });
+});

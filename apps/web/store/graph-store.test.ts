@@ -48,6 +48,12 @@ const mockApi = {
       edges: [],
     })
   ),
+  getLiveBalances: mock((addresses: string[]) =>
+    Promise.resolve({
+      balances: addresses.map((id) => ({ id, balance: '999999', type: 'BASIC' })),
+      failed: [],
+    })
+  ),
 };
 
 mock.module('@/lib/api', () => ({
@@ -70,6 +76,7 @@ describe('graph-store', () => {
       error: null,
       lastExpandedNodeId: null,
       inFlightRequests: new Set(),
+      balanceSyncedIds: new Set(),
       pathMode: {
         active: false,
         from: null,
@@ -95,6 +102,7 @@ describe('graph-store', () => {
     mockApi.expandGraph.mockClear();
     mockApi.findSubgraph.mockClear();
     mockApi.getLatestBlocksGraph.mockClear();
+    mockApi.getLiveBalances.mockClear();
   });
 
   describe('addNodes', () => {
@@ -523,6 +531,52 @@ describe('graph-store', () => {
       await loadInitialData();
 
       expect(mockApi.getLatestBlocksGraph).not.toHaveBeenCalled();
+    });
+
+    test('refreshBalancesForAddresses updates node balances', async () => {
+      const { addNodes } = useGraphStore.getState();
+      addNodes([
+        { data: { id: 'NQ09 VF5Y 1PKV MRM4 5LE1 55KV P6R2 GXYJ XYQF', type: 'BASIC', balance: '100' } },
+      ]);
+
+      await (useGraphStore.getState() as any).refreshBalancesForAddresses([
+        'NQ09 VF5Y 1PKV MRM4 5LE1 55KV P6R2 GXYJ XYQF',
+      ]);
+
+      expect(mockApi.getLiveBalances).toHaveBeenCalledTimes(1);
+      expect(useGraphStore.getState().nodes.get('NQ09 VF5Y 1PKV MRM4 5LE1 55KV P6R2 GXYJ XYQF')?.data.balance).toBe('999999');
+    });
+
+    test('refreshBalancesForAddresses dedupes already-synced addresses', async () => {
+      const { addNodes } = useGraphStore.getState();
+      addNodes([
+        { data: { id: 'NQ34 NT7S G97J EGA1 C0RM 0JT2 NX5S VL9S JVKR', type: 'BASIC', balance: '100' } },
+      ]);
+
+      await (useGraphStore.getState() as any).refreshBalancesForAddresses([
+        'NQ34 NT7S G97J EGA1 C0RM 0JT2 NX5S VL9S JVKR',
+      ]);
+      await (useGraphStore.getState() as any).refreshBalancesForAddresses([
+        'NQ34 NT7S G97J EGA1 C0RM 0JT2 NX5S VL9S JVKR',
+      ]);
+
+      expect(mockApi.getLiveBalances).toHaveBeenCalledTimes(1);
+    });
+
+    test('refreshBalancesForAddresses force mode bypasses dedupe', async () => {
+      const { addNodes } = useGraphStore.getState();
+      addNodes([
+        { data: { id: 'NQ55 H5H1 2AG5 XGSC L5NE 8U5E GF24 15SB GFEM', type: 'BASIC', balance: '100' } },
+      ]);
+
+      await (useGraphStore.getState() as any).refreshBalancesForAddresses([
+        'NQ55 H5H1 2AG5 XGSC L5NE 8U5E GF24 15SB GFEM',
+      ]);
+      await (useGraphStore.getState() as any).refreshBalancesForAddresses([
+        'NQ55 H5H1 2AG5 XGSC L5NE 8U5E GF24 15SB GFEM',
+      ], { force: true });
+
+      expect(mockApi.getLiveBalances).toHaveBeenCalledTimes(2);
     });
   });
 

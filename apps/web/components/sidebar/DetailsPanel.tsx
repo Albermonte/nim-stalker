@@ -1,6 +1,6 @@
 'use client';
 
-import { memo } from 'react';
+import { memo, useEffect } from 'react';
 import { useGraphStore } from '@/store/graph-store';
 import { formatNimiqAddress, formatNimiq, getNimiqWatchUrl, formatDate } from '@/lib/format-utils';
 
@@ -12,10 +12,15 @@ const TYPE_BADGE_STYLES: Record<string, string> = {
 };
 
 function DetailsPanelInner() {
-  const { selectedNodeId, selectedEdgeId, nodes, edges, expandNode, loading } = useGraphStore();
+  const { selectedNodeId, selectedEdgeId, nodes, edges, expandNode, loading, refreshBalancesForAddresses } = useGraphStore();
 
   const selectedNode = selectedNodeId ? nodes.get(selectedNodeId) : null;
   const selectedEdge = selectedEdgeId ? edges.get(selectedEdgeId) : null;
+
+  useEffect(() => {
+    if (!selectedNodeId) return;
+    void refreshBalancesForAddresses([selectedNodeId], { force: true });
+  }, [selectedNodeId, refreshBalancesForAddresses]);
 
   if (!selectedNode && !selectedEdge) {
     return (

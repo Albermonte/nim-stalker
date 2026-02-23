@@ -28,7 +28,7 @@ import { identiconManager } from '@/lib/identicon-manager';
 import { computeGraphHash, saveLayoutPositions, getLayoutPositions } from '@/lib/layout-cache';
 import { registerUiExtensions, attachUiExtensions } from '@/lib/cytoscape-ui-extensions';
 import { CYTOSCAPE_UI_EXTENSION_MODULES } from '@/lib/cytoscape-ui-extension-modules';
-import { getConnectedTxActivity } from './tooltip-utils';
+import { getNodeTxCount } from './tooltip-utils';
 
 // Register default layout statically (always needed)
 cytoscape.use(fcose);
@@ -188,26 +188,10 @@ function renderTooltipContent(
   nodeId: string,
   edgesMap: Map<string, CytoscapeEdge>
 ): JSX.Element {
-  if (nodeData.txCount !== undefined) {
-    return (
-      <span className="font-bold uppercase tracking-wide text-green-600">
-        {nodeData.txCount.toLocaleString()} TX
-      </span>
-    );
-  }
-
-  const recentActivity = getConnectedTxActivity(nodeId, edgesMap);
-  if (recentActivity) {
-    return (
-      <span className="font-bold uppercase tracking-wide text-nq-periwinkle">
-        {formatNimiq(recentActivity.totalValue)} · {recentActivity.txCount.toLocaleString()} TX
-      </span>
-    );
-  }
-
+  const txCount = getNodeTxCount(nodeData, nodeId, edgesMap);
   return (
     <span className="font-bold uppercase tracking-wide text-nq-periwinkle">
-      No transactions
+      {formatNimiq(nodeData.balance)} · {txCount.toLocaleString()} TX
     </span>
   );
 }
@@ -292,10 +276,13 @@ export function GraphCanvas() {
   const findPath = useGraphStore((state) => state.findPath);
   const clearLastExpanded = useGraphStore((state) => state.clearLastExpanded);
   const loadInitialData = useGraphStore((state) => state.loadInitialData);
+  const refreshBalancesForAddresses = useGraphStore((state) => state.refreshBalancesForAddresses);
   const layoutMode = useGraphStore((state) => state.layoutMode);
   // Memoize array conversion to avoid creating new arrays every render
   const nodes = useMemo(() => Array.from(nodesMap.values()), [nodesMap]);
   const edges = useMemo(() => Array.from(edgesMap.values()), [edgesMap]);
+  const nodeIdsForBalanceSync = useMemo(() => Array.from(nodesMap.keys()).sort(), [nodesMap]);
+  const nodeIdsForBalanceSyncKey = useMemo(() => nodeIdsForBalanceSync.join('|'), [nodeIdsForBalanceSync]);
 
   // Create Cytoscape elements format with identicons
   // Must spread data objects to avoid "Cannot assign to read only property" errors
@@ -453,6 +440,17 @@ export function GraphCanvas() {
   useEffect(() => {
     loadInitialData();
   }, [loadInitialData]);
+
+  // Refresh balances once when addresses become visible in the graph.
+  useEffect(() => {
+    if (nodeIdsForBalanceSync.length === 0) return;
+    const timer = setTimeout(() => {
+      void refreshBalancesForAddresses(nodeIdsForBalanceSync);
+    }, 200);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [nodeIdsForBalanceSync, nodeIdsForBalanceSyncKey, refreshBalancesForAddresses]);
 
   // Wire up identicon manager: update Cytoscape nodes when PNG conversions complete
   useEffect(() => {

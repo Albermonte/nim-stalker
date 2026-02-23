@@ -188,6 +188,20 @@ export class ApiClient {
     return result;
   }
 
+  async getLiveBalances(addresses: string[]): Promise<{
+    balances: Array<{
+      id: string;
+      balance: string;
+      type: string;
+    }>;
+    failed: string[];
+  }> {
+    return this.fetch('/address/balances/live', {
+      method: 'POST',
+      body: JSON.stringify({ addresses }),
+    });
+  }
+
   async getTransactions(
     address: string,
     options?: {

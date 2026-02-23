@@ -7,8 +7,74 @@ import { getAddressLabelService } from '../lib/address-labels';
 import { addressCache } from '../lib/address-cache';
 import { AddressType } from '@nim-stalker/shared';
 import { mapAccountType } from '../services/indexing';
+import { poolAll } from '../lib/concurrency';
 
 export const addressRoutes = new Elysia({ prefix: '/address' })
+  // POST /address/balances/live - Fetch live balances for a batch of addresses
+  .post(
+    '/balances/live',
+    async ({ body, set }) => {
+      const { addresses } = body;
+      const invalidAddresses = addresses.filter((addr) => !isValidNimiqAddress(addr));
+
+      if (invalidAddresses.length > 0) {
+        set.status = 400;
+        return { error: 'Invalid address format', invalidAddresses };
+      }
+
+      const formattedAddresses = Array.from(new Set(addresses.map(formatAddress)));
+
+      try {
+        const nimiq = getNimiqService();
+        const tasks = formattedAddresses.map((id) => async () => {
+          try {
+            const account = await nimiq.getAccount(id);
+            return {
+              id,
+              balance: String(account?.balance ?? 0),
+              type: mapAccountType(account?.type),
+            };
+          } catch {
+            return null;
+          }
+        });
+
+        const results = await poolAll(tasks, 5);
+        const balances = results.filter((entry): entry is { id: string; balance: string; type: AddressType } => entry != null);
+        const failed = formattedAddresses.filter((id) => !balances.some((entry) => entry.id === id));
+
+        if (balances.length > 0) {
+          await writeTx(async (tx) => {
+            await tx.run(
+              `UNWIND $entries AS entry
+               MERGE (a:Address {id: entry.id})
+               SET a.balance = entry.balance,
+                   a.type = entry.type`,
+              { entries: balances }
+            );
+          });
+
+          for (const entry of balances) {
+            addressCache.invalidate(entry.id);
+          }
+        }
+
+        return { balances, failed };
+      } catch (error) {
+        console.error('[POST /address/balances/live] Failed to fetch balances:', {
+          addressCount: formattedAddresses.length,
+          error: error instanceof Error ? error.message : error,
+        });
+        set.status = 500;
+        return { error: 'Failed to fetch live balances' };
+      }
+    },
+    {
+      body: t.Object({
+        addresses: t.Array(t.String(), { minItems: 1, maxItems: 100 }),
+      }),
+    }
+  )
   // GET /address/:addr - Get address metadata
   .get(
     '/:addr',

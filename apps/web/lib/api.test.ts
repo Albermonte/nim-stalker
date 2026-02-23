@@ -73,6 +73,13 @@ class TestableApiClient {
     return result;
   }
 
+  async getLiveBalances(addresses: string[]) {
+    return this.fetch('/address/balances/live', {
+      method: 'POST',
+      body: JSON.stringify({ addresses }),
+    });
+  }
+
   async expandGraph(addresses: string[], direction = 'both') {
     return this.fetch('/graph/expand', {
       method: 'POST',
@@ -282,6 +289,51 @@ describe('ApiClient', () => {
         'http://localhost:3001/address/NQ42%20TEST%20ADDR',
         expect.any(Object)
       );
+    });
+  });
+
+  describe('getLiveBalances', () => {
+    test('posts addresses to live balance endpoint', async () => {
+      mockFetch.mockImplementation(() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            balances: [{ id: 'NQ42TEST', balance: '123', type: 'BASIC' }],
+            failed: [],
+          }),
+        })
+      );
+
+      const result = await (api as any).getLiveBalances(['NQ42TEST']);
+
+      expect(result).toEqual({
+        balances: [{ id: 'NQ42TEST', balance: '123', type: 'BASIC' }],
+        failed: [],
+      });
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:3001/address/balances/live',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ addresses: ['NQ42TEST'] }),
+        })
+      );
+    });
+
+    test('does not use address cache for live balances', async () => {
+      mockFetch.mockImplementation(() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            balances: [{ id: 'NQ42TEST', balance: '123', type: 'BASIC' }],
+            failed: [],
+          }),
+        })
+      );
+
+      await (api as any).getLiveBalances(['NQ42TEST']);
+      await (api as any).getLiveBalances(['NQ42TEST']);
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
     });
   });
 
