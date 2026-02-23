@@ -4,289 +4,324 @@
 
 # ✦ Nim Stalker ✦
 
-**Ever wondered where your NIM went? Now you can stalk it.** 👀
+**Ever wondered where your NIM went? Now you can stalk it.**
 
-A blockchain transaction graph visualizer for Nimiq. Search any address, watch the connections unfold, and discover the hidden web of transactions — all rendered as a beautiful interactive graph.
+Nim Stalker is a transaction graph explorer for Nimiq. Search an address, expand its neighborhood, inspect flows, and follow paths between wallets in a live graph UI.
 
-> *Think of it as Six Degrees of Kevin Bacon, but for crypto wallets.* 🥓
+## What It Does
 
----
+Nim Stalker ingests Nimiq blockchain transactions, stores both raw and aggregated graph relationships in Neo4j, and serves them through a Bun + Elysia API. The Next.js frontend renders that data as an interactive graph and transaction timeline with path search, filtering, live balance refresh, and export tools.
 
-## 🔍 What Is This?
+## Architecture at a Glance
 
-Nim Stalker takes Nimiq blockchain addresses and turns their transaction history into an explorable, interactive graph. Nodes are addresses, edges are aggregated transactions between them. You can expand nodes, find shortest paths between wallets, and zoom into the financial topology of the Nimiq network.
-
-It's like a map — but instead of roads, you see money flowing.
-
----
-
-## ⚡ How It Works
-
-```
- You search an address
-        ↓
- Nimiq RPC fetches transactions (JSON-RPC 2.0)
-        ↓
- Neo4j stores the graph (nodes = addresses, edges = aggregated tx)
-        ↓
- Elysia API serves it up
-        ↓
- Next.js + Cytoscape.js renders an interactive graph
-        ↓
- You go "whoa" and expand more nodes 🤯
+```text
+Nimiq RPC (HTTP + block stream)
+  -> Blockchain indexer (backfill + live subscription + gap repair)
+  -> Neo4j graph storage (Address, TRANSACTION, TRANSACTED_WITH)
+  -> Elysia API on Bun (graph, address, tx, indexer routes)
+  -> Next.js 15 + Cytoscape + Zustand frontend
 ```
 
-**The pipeline:**
-1. **Index** — Batch backfill processes historical batches from genesis; on-demand indexing fetches account + transactions via JSON-RPC with cursor pagination
-2. **Store** — Groups by (sender, receiver) pairs and MERGEs into Neo4j `TRANSACTED_WITH` edges with dedup via tx hash arrays
-3. **Serve** — Elysia REST API with path finding (`shortestPath`), subgraph extraction, and graph expansion
-4. **Live** — WebSocket subscription to head blocks indexes new transactions in real-time
-5. **Render** — Cytoscape.js with three layout modes, identicon-based node avatars, and a pink-yellow-periwinkle design system that slaps
+Current stack:
+- API: Elysia on Bun.
+- Web: Next.js 15, React 18, Cytoscape.js, Zustand, Tailwind CSS.
+- Database: Neo4j 5.
+- Indexer state/checkpoints: SQLite (`INDEXER_DB_PATH`, default `data/indexer.sqlite`).
+- Shared contracts: `@nim-stalker/shared` workspace package.
 
-The blockchain indexer runs both backfill and live subscription concurrently for full-chain coverage.
+## Core Features
 
----
+- Interactive graph expansion (`incoming`, `outgoing`, `both`) with value/time filters.
+- Path and subgraph discovery between addresses.
+- Address details and paginated transaction history.
+- Recent transaction feed with DB-first strategy and RPC fallback.
+- Home graph auto-refresh.
+- Dedicated transaction timeline page (`/address/<slug>/tx...`).
+- Address-label autocomplete (shared address book + validator metadata).
+- JSON and CSV export from the graph view.
+- Live balance refresh through `POST /address/balances/live`.
+- Multiple layout categories and modes:
+  - Force-directed: `fcose`, `fcose-weighted`, `cola`
+  - Hierarchical: `elk-layered-down`, `elk-layered-right`, `dagre-tb`, `dagre-lr`
+  - Flow: `directed-flow`, `biflow-lr`, `biflow-tb`
+  - Other: `elk-stress`, `concentric-volume`
 
-## 🛠 Tech Stack
+## Repository Structure
 
-| Layer | Tech | Why |
-|-------|------|-----|
-| **Frontend** | Next.js 15, React, Cytoscape.js, Zustand, Tailwind CSS | App Router, interactive graph viz, reactive state |
-| **Backend** | Elysia (Bun runtime) | Fast, type-safe, runs on Bun |
-| **Database** | Neo4j | Native graph traversal, `shortestPath`, no JOIN nightmares |
-| **Blockchain** | `@albermonte/nimiq-rpc-client-ts` | Typed RPC + WebSocket streaming to a Nimiq node |
-| **Build** | Turborepo, Bun, TypeScript | Monorepo with blazing builds |
-| **Identity** | `identicons-esm` | Unique visual avatars per address |
-| **Validation** | `@nimiq/utils` | Official Nimiq address validation |
+- `/Users/albermonte/nimiq/nimiq-graph/apps/api`
+- `/Users/albermonte/nimiq/nimiq-graph/apps/web`
+- `/Users/albermonte/nimiq/nimiq-graph/packages/shared`
+- `/Users/albermonte/nimiq/nimiq-graph/docker-compose.yml`
+- `/Users/albermonte/nimiq/nimiq-graph/docker-compose.prod.yml`
+- `/Users/albermonte/nimiq/nimiq-graph/docker/nimiq-client.toml`
 
----
+## Getting Started
 
-## ✨ Features
+### Docker Development (Recommended)
 
-- 🕸️ **Interactive Graph** — Expand addresses, drag nodes, zoom in/out, right-click context menus
-- 🔀 **Three Layout Modes** — Force-directed (fcose), constraint-based (cola), and deterministic multi-root preset
-- 🛤️ **Path Finding** — Find the shortest path between any two addresses (up to 6 hops)
-- 🗺️ **Subgraph Extraction** — Pull out connected subgraphs with configurable max hops and direction
-- 🎨 **Identicons** — Every address gets a unique visual identity (SVG → PNG pipeline for crisp rendering at any zoom)
-- 🏷️ **Address Labels** — Known addresses display human-readable names and icons
-- 🌸 **Design System** — Pink (#FF90E8), yellow (#FFC900), periwinkle (#8B8BF5), cream (#FAF4F0) — inspired by Peanut.me
-- ⚡ **Incremental Indexing** — Re-index addresses without duplicating data (tx hash dedup)
-- 🔄 **Real-time Indexing** — Batch backfill from genesis + live WebSocket block subscription for full-chain coverage
-- 📋 **Job Tracking** — Monitor indexing progress with WebSocket updates
-- 🔒 **Security Layer** — Rate limiting + API key authentication for sensitive routes
-- 🔍 **Transaction Lookup** — Search by hash (DB first, then RPC fallback)
-- 📦 **Export** — Download graph data as JSON or CSV
+1. Configure environment values.
 
----
-
-## 🖥️ Custom Nimiq Node
-
-This project runs against a **slim Albatross node** — a stripped-down fork of the Nimiq PoS node optimized for indexing and RPC queries.
-
-👉 **[core-rs-albatross-slim](https://github.com/Albermonte/core-rs-albatross-slim)**
-
-It provides the `getTransactionsByAddress` RPC endpoint with cursor-based pagination that Nim Stalker relies on to index the blockchain.
-
----
-
-## 🚀 Getting Started
-
-### Docker (recommended)
-
-**Development:**
 ```bash
-docker compose up
+cp .env.example .env
 ```
 
-If you previously ran the production stack on the same host, force a rebuild once:
+At minimum set `NEO4J_PASSWORD` in `.env`.
+
+2. Create the external Neo4j volume once.
+
+```bash
+docker volume create neo4jdata
+```
+
+If you use a custom name, set `NEO4J_VOLUME_NAME` first.
+
+3. Start the development stack.
+
 ```bash
 docker compose up --build
 ```
 
-Nimiq chain data is persisted on disk at `./.data/nimiq` by default (configurable with `NIMIQ_DATA_DIR`).
-Neo4j graph data is stored in an external Docker volume (`neo4jdata` by default, configurable with `NEO4J_VOLUME_NAME`).
-Create it once before first run:
-```bash
-docker volume create neo4jdata
-```
-If `nimiq-graph-node-1` keeps restarting with `ExitCode 137` / unhealthy status, reduce Neo4j memory
-with `NEO4J_HEAP_INITIAL`, `NEO4J_HEAP_MAX`, `NEO4J_PAGECACHE`, and `NEO4J_MEMORY_LIMIT`
-or increase Docker Desktop memory.
-On Linux hosts, if you use a custom path, `node-data-init` will normalize ownership/permissions
-for the Nimiq node user (`NIMIQ_NODE_UID` / `NIMIQ_NODE_GID`, defaults `1001:1001`).
+Development services:
+- `genesis-init`
+- `node-data-init`
+- `node`
+- `db`
+- `api`
+- `web`
 
-This spins up:
-- **Neo4j** — Graph database on `bolt://localhost:7687` (browser at `http://localhost:7474`)
-- **API** — Elysia server on `http://localhost:3001`
-- **Web** — Next.js app on `http://localhost:3000`
+Default local endpoints:
+- Web: `http://localhost:3000`
+- API: `http://localhost:3001`
+- Neo4j Browser: `http://localhost:7474`
+- Neo4j Bolt: `bolt://localhost:7687`
 
-**Production** (`docker-compose.prod.yml`):
-```bash
-docker compose -f docker-compose.prod.yml up -d
-```
+Persistence and ownership:
+- Nimiq node data is persisted under `NIMIQ_DATA_DIR` (default `./.data/nimiq`).
+- Neo4j data is persisted in external volume `NEO4J_VOLUME_NAME` (default `neo4jdata`).
+- Linux hosts can control node data ownership using `NIMIQ_NODE_UID` and `NIMIQ_NODE_GID` (default `1001:1001`).
 
-After code updates, rebuild images before restarting:
+### Docker Production
+
+1. Provide required production variables:
+- `NEO4J_PASSWORD`
+- `CORS_ORIGIN`
+- `API_KEY`
+- `NEXT_PUBLIC_API_URL`
+
+2. Start the production stack:
+
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-Includes:
-- **genesis-init** — Downloads Nimiq genesis file
-- **node** — Slim Albatross Nimiq node with healthcheck
-- **db** — Neo4j with tuned memory settings
-- **api** — Production API build
-- **web** — Production Next.js build
-- **nginx** — Optional reverse proxy (enable with `--profile with-nginx`)
+Production services:
+- `genesis-init`
+- `node-data-init`
+- `node`
+- `db`
+- `api`
+- `web`
 
-### Local Development
+### Local Non-Docker Workflow
+
+1. Install dependencies:
 
 ```bash
-# Install dependencies
 bun install
+```
 
-# Set up environment variables
-# API: NEO4J_URI, NEO4J_PASSWORD, NIMIQ_RPC_URL
-# Web: NEXT_PUBLIC_API_URL
+2. Ensure Neo4j and a Nimiq RPC endpoint are reachable.
 
-# Initialize database constraints
+3. Set API runtime variables before starting:
+- `NEO4J_URI` (required)
+- `NEO4J_PASSWORD` (required)
+- `NEO4J_USER` (optional, default `neo4j`)
+- `NIMIQ_RPC_URL` (optional, default `http://localhost:8648`)
+- `PORT` (optional, default `3001`)
+
+Also set frontend API URL when needed:
+- `NEXT_PUBLIC_API_URL` (for explicit API target)
+
+4. Initialize DB constraints and indexes:
+
+```bash
 bun run db:init
+```
 
-# Start everything
+5. Start all workspaces:
+
+```bash
 bun run dev
 ```
 
-### Environment Variables
+## Configuration
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `NEO4J_URI` | ✅ | — | Neo4j connection URI |
-| `NEO4J_USER` | — | `neo4j` | Neo4j username |
-| `NEO4J_PASSWORD` | ✅ | — | Neo4j password |
-| `NEO4J_VOLUME_NAME` | — | `neo4jdata` | External Docker volume name used by Neo4j |
-| `NEO4J_HEAP_INITIAL` | — | `512m` (dev), `1G` (prod) | Neo4j JVM initial heap size |
-| `NEO4J_HEAP_MAX` | — | `1G` (dev), `2G` (prod) | Neo4j JVM max heap size |
-| `NEO4J_PAGECACHE` | — | `512m` (dev), `2G` (prod) | Neo4j page cache budget |
-| `NEO4J_MEMORY_LIMIT` | — | `3G` (dev) | Docker memory limit for Neo4j container |
-| `NEO4J_TX_MEMORY_MAX` | — | `512m` (dev), `1G` (prod) | Neo4j transaction memory cap |
-| `NIMIQ_RPC_URL` | — | `http://localhost:8648` | Nimiq node RPC endpoint |
-| `PORT` | — | `3001` | API server port |
-| `CORS_ORIGIN` | prod | — | Allowed CORS origin |
-| `BACKFILL_CHECKPOINT_INTERVAL` | — | `100` | Persist indexer progress every N processed backfill batches |
-| `BACKFILL_THROTTLE_MS` | — | `0` | Optional backfill sleep duration (ms) to reduce RPC pressure |
-| `BACKFILL_THROTTLE_EVERY_BATCHES` | — | `10` | Apply backfill throttle every N batches (when throttle > 0) |
-| `BACKFILL_DEFER_AGGREGATES` | — | `true` | Defer TRANSACTED_WITH aggregate updates until backfill completes |
-| `BACKFILL_RPC_PREFETCH` | — | `4` | Number of in-flight RPC batch fetches during backfill |
-| `GAP_REPAIR_INTERVAL_MS` | — | `300000` | Interval between background gap-repair cycles after backfill |
-| `GAP_REPAIR_MAX_PER_CYCLE` | — | `50` | Max missing batches verified per gap-repair cycle |
-| `LIVE_TRANSITION_GAP_BUDGET_MS` | — | `5000` | Per-macro-block time budget for strict contiguous verification |
-| `LIVE_DEFER_AGGREGATES` | — | `true` | Defer live block aggregate updates and flush them in the background queue |
-| `VERIFY_BATCH_DEFER_AGGREGATES` | — | `true` | Defer aggregate updates during gap verification and flush in smaller chunks |
-| `VERIFY_BATCH_AGGREGATE_PAIR_BATCH_SIZE` | — | `5` | Pairs attempted per deferred flush sub-batch before handing to aggregate updater |
-| `VERIFY_BATCH_AGGREGATE_FLUSH_LIMIT` | — | `50` | Max deferred pairs attempted per background flush cycle |
-| `VERIFY_BATCH_AGGREGATE_FLUSH_TICK_MS` | — | `1000` | Delay between deferred aggregate background flush cycles when queue is non-empty |
-| `EDGE_AGGREGATE_PAIR_CHUNK_SIZE` | — | `5` | Internal pair chunk size per Neo4j query in `updateEdgeAggregatesForPairs` |
-| `UPDATE_ADDRESS_TXCOUNT_ON_PAIR_UPDATE` | — | `false` | Whether live/gap per-pair updates recompute `Address.txCount` immediately |
-| `REBUILD_PHASE1_CHUNK_SIZE` | — | `1000` | Address chunk size for TRANSACTED_WITH rebuild phase |
-| `REBUILD_PHASE1_ROWS_PER_TX` | — | `250` | Rows per inner transaction for TRANSACTED_WITH rebuild phase |
-| `REBUILD_PHASE2_CHUNK_SIZE` | — | `1000` | Address chunk size for `Address.txCount` rebuild phase |
-| `REBUILD_PHASE2_ROWS_PER_TX` | — | `250` | Rows per inner transaction for `Address.txCount` rebuild phase |
-| `REBUILD_CHUNK_RETRY_ATTEMPTS` | — | `3` | Retry attempts per rebuild chunk on transient Neo4j failures |
-| `REBUILD_CHUNK_RETRY_BASE_DELAY_MS` | — | `2000` | Base backoff delay between rebuild chunk retries |
-| `REBUILD_CHUNK_RETRY_MAX_DELAY_MS` | — | `30000` | Max backoff delay between rebuild chunk retries |
-| `REBUILD_STRATEGY` | — | `keyset` | Aggregate rebuild mode (`keyset` default, optional `apoc` fallback) |
-| `API_KEY` | prod | — | Required for sensitive API routes from non-main origins |
-| `MAIN_ORIGIN_HOSTS` | — | `localhost,nimstalker.com,www.nimstalker.com` | Origins treated as first-party |
-| `SENSITIVE_RATE_LIMIT_WINDOW_MS` | — | `60000` | Rate-limit window for sensitive routes |
-| `SENSITIVE_RATE_LIMIT_PER_WINDOW` | — | `300` | Non-main-origin limit per window |
-| `SENSITIVE_RATE_LIMIT_MAIN_ORIGIN_PER_WINDOW` | — | `100000` | High first-party limit per window |
-| `NEXT_PUBLIC_API_URL` | ✅ | — | API URL for the frontend |
+### 1. Core Runtime Variables
 
----
+These are required by runtime behavior (provided either directly by your shell or by compose wiring):
 
-## 📐 Architecture
+| Variable | Required | Default | Notes |
+|---|---|---|---|
+| `NEO4J_URI` | Yes (API runtime) | None | Required by `apps/api/src/lib/config.ts`; compose sets `bolt://db:7687`. |
+| `NEO4J_PASSWORD` | Yes | None | Required by API and Neo4j auth. |
+| `NEO4J_USER` | No | `neo4j` | Neo4j username. |
+| `NIMIQ_RPC_URL` | No | `http://localhost:8648` | API RPC endpoint (`apps/api/src/lib/config.ts`). |
+| `PORT` | No | `3001` | API listen port. |
+| `NIMIQ_DATA_DIR` | No | `./.data/nimiq` | Compose host path for Nimiq node data. |
+| `NIMIQ_NODE_UID` | No | `1001` | Node container UID for host volume ownership. |
+| `NIMIQ_NODE_GID` | No | `1001` | Node container GID for host volume ownership. |
+| `NEO4J_VOLUME_NAME` | No | `neo4jdata` | External Docker volume name for Neo4j `/data`. |
+| `INDEXER_DB_PATH` | No | `data/indexer.sqlite` | SQLite indexer DB path (`apps/api/src/lib/indexer-db.ts`). |
 
-```
-nim-stalker/
-├── apps/
-│   ├── api/                   # Elysia REST API (Bun)
-│   │   └── src/
-│   │       ├── data/          # Address book data
-│   │       ├── lib/           # Neo4j driver, config, caching, address utils, security, job-tracker, concurrency
-│   │       ├── routes/        # health, address, graph, transaction, jobs, indexer endpoints
-│   │       └── services/      # rpc-client, graph, path-finder, subgraph-finder, blockchain-indexer, indexing
-│   └── web/                   # Next.js frontend
-│       ├── app/               # App Router pages
-│       ├── components/        # Graph canvas, controls, sidebar panels
-│       ├── lib/               # API client, formatters, layout engine
-│       └── store/             # Zustand graph store
-├── packages/shared/           # Shared TypeScript types
-├── docker-compose.yml         # Development stack (Neo4j + API + Web)
-└── docker-compose.prod.yml    # Production stack (+ Nimiq node, genesis-init, optional nginx)
-```
+### 2. Production-Only Variables
 
-**Neo4j Graph Model:**
-- `(:Address)` — nodes with id, type, balance, txCount, timestamps
-- `[:TRANSACTED_WITH]` — aggregated edges with txCount, totalValue, txHashes array (for dedup)
-- `(:Meta)` — singleton node tracking blockchain indexer state (lastProcessedBatch, totalTransactionsIndexed)
+| Variable | Required in Prod | Default | Notes |
+|---|---|---|---|
+| `CORS_ORIGIN` | Yes | None | Must be explicit in production API (not `*`). |
+| `API_KEY` | Yes | None | Required for non-main-origin access to sensitive endpoints in production. |
+| `NEXT_PUBLIC_API_URL` | Yes | None | Required for production web image build/runtime in compose. |
+| `MAIN_ORIGIN_HOSTS` | No | `localhost,nimstalker.com,www.nimstalker.com` (compose) | Comma-separated first-party origins for API-key bypass path. |
 
----
+### 3. Advanced Tuning Variables
 
-## 📡 API Endpoints
+Neo4j memory and container limits:
 
-| Method | Route | Description |
-|--------|-------|-------------|
-| `GET` | `/health` | Health check |
-| `GET` | `/address/:addr` | Get address info |
-| `POST` | `/address/:addr/index` | Index an address from the blockchain |
-| `GET` | `/transaction/:hash` | Lookup transaction by hash (DB first, then RPC fallback) |
-| `POST` | `/graph/expand` | Expand a node's connections |
-| `GET` | `/graph/path` | Find shortest path between two addresses |
-| `GET` | `/graph/subgraph` | Extract a connected subgraph |
-| `GET` | `/graph/nodes` | Get specific nodes by ID |
-| `GET` | `/graph/latest-blocks` | Get graph data from the latest blocks |
-| `GET` | `/jobs` | List active indexing jobs |
-| `WS` | `/jobs/ws` | Real-time job progress via WebSocket |
-| `GET` | `/indexer/status` | Blockchain indexer status and backfill progress |
+| Variable | Default (Dev Compose) | Default (Prod Compose) |
+|---|---|---|
+| `NEO4J_HEAP_INITIAL` | `512m` | `512m` |
+| `NEO4J_HEAP_MAX` | `1G` | `1G` |
+| `NEO4J_PAGECACHE` | `512m` | `2G` |
+| `NEO4J_MEMORY_LIMIT` | `3G` | `6G` |
+| `NEO4J_TX_MEMORY_MAX` | `512m` | `512m` |
 
-Sensitive-route policy in production:
-- `POST /address/:addr/index`
+Indexer, aggregate, and repair tuning:
+
+| Variable | Default |
+|---|---|
+| `BACKFILL_CHECKPOINT_INTERVAL` | `100` |
+| `BACKFILL_THROTTLE_MS` | `0` |
+| `BACKFILL_THROTTLE_EVERY_BATCHES` | `10` |
+| `BACKFILL_DEFER_AGGREGATES` | `true` |
+| `BACKFILL_RPC_PREFETCH` | `4` |
+| `GAP_REPAIR_INTERVAL_MS` | `300000` |
+| `GAP_REPAIR_MAX_PER_CYCLE` | `50` |
+| `LIVE_TRANSITION_GAP_BUDGET_MS` | `5000` |
+| `LIVE_DEFER_AGGREGATES` | `true` |
+| `VERIFY_BATCH_DEFER_AGGREGATES` | `true` |
+| `VERIFY_BATCH_AGGREGATE_PAIR_BATCH_SIZE` | `5` |
+| `VERIFY_BATCH_AGGREGATE_FLUSH_LIMIT` | `50` |
+| `VERIFY_BATCH_AGGREGATE_FLUSH_TICK_MS` | `1000` |
+| `EDGE_AGGREGATE_PAIR_CHUNK_SIZE` | `5` |
+| `UPDATE_ADDRESS_TXCOUNT_ON_PAIR_UPDATE` | `false` |
+| `REBUILD_PHASE1_CHUNK_SIZE` | `1000` |
+| `REBUILD_PHASE1_ROWS_PER_TX` | `250` |
+| `REBUILD_PHASE2_CHUNK_SIZE` | `1000` |
+| `REBUILD_PHASE2_ROWS_PER_TX` | `250` |
+| `REBUILD_CHUNK_RETRY_ATTEMPTS` | `3` |
+| `REBUILD_CHUNK_RETRY_BASE_DELAY_MS` | `2000` |
+| `REBUILD_CHUNK_RETRY_MAX_DELAY_MS` | `30000` |
+| `REBUILD_STRATEGY` | `keyset` |
+
+Sensitive endpoint rate limit controls:
+
+| Variable | Default |
+|---|---|
+| `SENSITIVE_RATE_LIMIT_WINDOW_MS` | `60000` |
+| `SENSITIVE_RATE_LIMIT_PER_WINDOW` | `300` |
+| `SENSITIVE_RATE_LIMIT_MAIN_ORIGIN_PER_WINDOW` | `100000` |
+
+## HTTP API Reference
+
+| Method | Route | Description | Key params and limits |
+|---|---|---|---|
+| `GET` | `/` | API metadata | Returns API name/version payload. |
+| `GET` | `/health` | Health check | Returns `healthy` or `unhealthy` based on Neo4j connectivity. |
+| `POST` | `/address/balances/live` | Fetch and persist live balances for addresses | Body: `addresses` array, min 1, max 100. |
+| `GET` | `/address/:addr` | Get address metadata | Validates Nimiq address; creates/fills from RPC if missing. |
+| `GET` | `/address/:addr/transactions` | Paginated transaction history for an address | `page`, `pageSize` (max 100), `direction`, optional timestamp/value filters. |
+| `POST` | `/graph/expand` | Expand graph neighborhood | Body `addresses` (1..50), `direction`, optional filters (`limit` max 500, time/value bounds). |
+| `GET` | `/graph/path` | Shortest path query | Query: `from`, `to`, `maxDepth` (1..10, default 6). |
+| `GET` | `/graph/subgraph` | All-shortest-path subgraph between two addresses | Query: `from`, `to`, `maxHops` (1..10, default 3), `directed` boolean. |
+| `GET` | `/graph/nodes` | Fetch specific nodes by id list | Query: `ids` CSV, max 100 ids. |
+| `GET` | `/graph/latest-blocks` | Build graph slice from latest blocks | Query: `count` (1..50, default 10). |
+| `GET` | `/transactions/recent` | Recent global transactions feed | `page`, `pageSize` (clamped to max 200). DB-first with RPC fallback on timeout/failure. |
+| `GET` | `/transaction/:hash` | Transaction by hash | 64-hex hash required; DB-first then RPC fallback. |
+| `GET` | `/indexer/status` | Indexer runtime and progress state | Includes batch, gap, queue, and progress fields. |
+| `GET` | `/indexer/verify` | Backfill integrity verification | Query: `sample` (1..50), `includeGapList=true|false`. |
+
+## Security and Rate Limiting
+
+Sensitive endpoint policy is enforced only when `NODE_ENV=production`.
+
+Sensitive routes:
 - `GET /graph/subgraph`
 - `GET /graph/latest-blocks`
+- `GET /indexer/verify`
 
-These routes are rate-limited. Requests from main origins (`localhost`, `nimstalker.com`) get a very high limit. Other origins must provide `x-api-key: <API_KEY>`.
+Policy behavior in production:
+- All sensitive routes are rate-limited.
+- Main-origin requests (from `MAIN_ORIGIN_HOSTS`) use the high first-party limit.
+- Non-main-origin requests must provide `x-api-key: <API_KEY>`.
+- Rate-limit headers are emitted (`x-ratelimit-limit`, `x-ratelimit-remaining`, `x-ratelimit-reset`).
 
-Caching behavior:
-- API address cache TTL: 5 minutes (`apps/api/src/lib/address-cache.ts`)
-- Web API client in-memory endpoint TTLs: 2s to 60s depending on endpoint (`apps/web/lib/api.ts`)
+## Frontend Routes and Deep Links
 
----
+Canonical frontend routes:
+- `/`
+- `/address/<address-slug>`
+- `/address/<address-slug>/tx?direction=<incoming|outgoing|both>&limit=<50|100|200|500>`
+- `/tx/<64-hex-hash>`
+- `/path?from=<address-slug>&to=<address-slug>&maxHops=<1-10>&directed=<true|false>`
 
-## 🎨 Design System
+Notes:
+- `address-slug` is an uppercase spaceless Nimiq address.
+- Invalid route params are validated client-side and redirected to `/`.
 
-The UI follows a **Peanut.me-inspired** palette with playful, bold aesthetics:
+## Data Model and Indexing Behavior
 
-| Color | Hex | Usage |
-|-------|-----|-------|
-| 🌸 Pink | `#FF90E8` | Primary actions, selection highlights, sparkle accents |
-| 💜 Pink Dark | `#E91E8C` | Hover states, emphasis |
-| 💠 Periwinkle | `#8B8BF5` | Path overlays, secondary actions |
-| 🌟 Yellow | `#FFC900` | Root nodes, warnings, sparkle accents |
-| 🍦 Cream | `#FAF4F0` | Backgrounds |
-| 🟣 Purple | `#6340DF` | Accents |
+Neo4j model:
+- `(:Address)` nodes store address metadata (`id`, `type`, `balance`, `txCount`, optional label timestamps).
+- `[:TRANSACTION]` relationships store raw transactions (`hash`, `value`, `fee`, `blockNumber`, `timestamp`, `data`).
+- `[:TRANSACTED_WITH]` relationships store directional aggregates with:
+  - `txCount`
+  - `totalValue`
+  - `firstTxAt`
+  - `lastTxAt`
 
-Style hallmarks: `border-2`, `rounded-sm` (2px), offset shadows (`4px 4px`), active press effects on buttons, and sparkle (✦) decorations.
+Indexer behavior:
+- Opens SQLite checkpoint DB (`INDEXER_DB_PATH`) for indexed batch tracking and metadata.
+- Runs backfill first, then starts live block subscription.
+- Performs periodic gap repair for missing batches.
+- Can defer aggregate updates into a queued background flush path.
+- Can rebuild all aggregates after backfill (`REBUILD_*`, `REBUILD_STRATEGY`).
 
----
+Labeling and caching:
+- Address labels come from shared address book plus validator API metadata.
+- API address cache TTL is 5 minutes.
+- Web API client caches by endpoint TTL (latest graph, address, recent tx, etc.).
 
-## 🧪 Testing
+## Testing and CI
+
+Local commands:
 
 ```bash
-bun run test        # Run all tests with coverage
-bun run lint        # Lint everything
+bun run test
+bun run lint
+bun run build
 ```
 
----
+Current GitHub Actions workflow (`.github/workflows/test.yml`) runs:
+- dependency install (`bun install --frozen-lockfile`)
+- tests (`bun run test`)
+- lint (`bun run lint`)
+- security gate (`bun audit`) that fails on high/critical findings
 
-<p align="center">
-  <em>Built with ✦ pink sparkles and mass surveillance energy ✦</em>
-</p>
+## Custom Node Recommendation
+
+Nim Stalker works best with the slim Albatross node fork:
+
+- [core-rs-albatross-slim](https://github.com/Albermonte/core-rs-albatross-slim)
+
+This node is recommended for predictable indexing throughput and RPC behavior.
+
+You can still point Nim Stalker at any compatible RPC endpoint using `NIMIQ_RPC_URL`, but throughput and endpoint behavior depend on the provider you choose.
