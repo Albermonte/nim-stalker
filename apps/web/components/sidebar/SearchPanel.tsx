@@ -110,7 +110,7 @@ function SearchPanelInner() {
             onEnter={() => {
               if (!loading) void handleSearch();
             }}
-            placeholder="NQ42 XXXX XXXX ... or address-book label"
+            placeholder="NQ42 XXXX... or label"
             ariaLabel="Search address or label"
             disabled={loading}
           />
@@ -146,7 +146,7 @@ function SearchPanelInner() {
             onEnter={() => {
               if (!loading) void handleAddNode();
             }}
-            placeholder="NQ42 XXXX XXXX ... or address-book label"
+            placeholder="NQ42 XXXX... or label"
             ariaLabel="Add node address or label"
             disabled={loading}
           />
