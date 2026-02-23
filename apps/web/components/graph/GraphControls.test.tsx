@@ -1,6 +1,20 @@
 import React from 'react';
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { Window } from 'happy-dom';
+import { render, waitFor } from '@testing-library/react';
+
+if (!globalThis.window || !globalThis.document) {
+  const window = new Window();
+  Object.assign(globalThis, {
+    window,
+    document: window.document,
+    navigator: window.navigator,
+    HTMLElement: window.HTMLElement,
+    Node: window.Node,
+    getComputedStyle: window.getComputedStyle.bind(window),
+  });
+}
 
 function createStoreState() {
   return {
@@ -21,6 +35,8 @@ function createStoreState() {
       pathNodeIds: new Set(['A', 'B']),
       pathNodeOrder: ['A', 'B'],
       pathEdgeIds: new Set(['A->B']),
+      from: 'A',
+      to: 'B',
       savedNodes: null,
       savedEdges: null,
       stats: {
@@ -58,5 +74,32 @@ describe('GraphControls', () => {
     expect(html).toContain('All Paths');
     expect(html).toContain('Layout: fCoSE');
     expect(html).toContain('Exit Path View');
+  });
+
+  test('syncs URL using canonical path endpoints', async () => {
+    mockStore.pathView.pathNodeOrder = ['A', 'B', 'D', 'C'];
+    mockStore.pathView.from = 'A';
+    mockStore.pathView.to = 'D';
+
+    const replaceStateSpy = mock(() => {});
+    const originalReplaceState = window.history.replaceState;
+    Object.defineProperty(window.history, 'replaceState', {
+      configurable: true,
+      writable: true,
+      value: replaceStateSpy,
+    });
+
+    try {
+      render(<GraphControls />);
+
+      await waitFor(() => expect(replaceStateSpy).toHaveBeenCalledTimes(1));
+      expect(replaceStateSpy.mock.calls[0]?.[2]).toBe('/path?from=A&to=D&maxHops=3&directed=false');
+    } finally {
+      Object.defineProperty(window.history, 'replaceState', {
+        configurable: true,
+        writable: true,
+        value: originalReplaceState,
+      });
+    }
   });
 });

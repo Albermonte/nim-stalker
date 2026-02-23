@@ -43,12 +43,10 @@ export function GraphControls() {
 
   // Sync URL when entering/exiting path view
   useEffect(() => {
-    if (pathView.active && pathView.stats && pathView.pathNodeOrder.length >= 2) {
-      const from = pathView.pathNodeOrder[0];
-      const to = pathView.pathNodeOrder[pathView.pathNodeOrder.length - 1];
-      window.history.replaceState(null, '', buildPathUrl(from, to, pathView.stats.maxHops, pathView.stats.directed));
+    if (pathView.active && pathView.stats && pathView.from && pathView.to) {
+      window.history.replaceState(null, '', buildPathUrl(pathView.from, pathView.to, pathView.stats.maxHops, pathView.stats.directed));
     }
-  }, [pathView.active, pathView.stats, pathView.pathNodeOrder]);
+  }, [pathView.active, pathView.stats, pathView.from, pathView.to]);
 
   const layoutSelector = (
     <div className="nq-card py-2 px-3 text-xs w-48" ref={layoutPanelRef}>

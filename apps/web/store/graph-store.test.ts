@@ -79,6 +79,8 @@ describe('graph-store', () => {
       },
       pathView: {
         active: false,
+        from: null,
+        to: null,
         pathNodeIds: new Set(),
         pathNodeOrder: [],
         pathEdgeIds: new Set(),
@@ -456,6 +458,36 @@ describe('graph-store', () => {
       expect(state.pathView.active).toBe(true);
       expect(state.nodes.size).toBe(2);
       expect(state.edges.size).toBe(1);
+    });
+
+    test('findPath preserves requested endpoints even when node order tail differs', async () => {
+      mockApi.findSubgraph.mockImplementation(() =>
+        Promise.resolve({
+          found: true,
+          subgraph: {
+            nodes: [
+              { data: { id: 'A', type: 'BASIC', balance: '100', indexStatus: 'COMPLETE' } },
+              { data: { id: 'B', type: 'BASIC', balance: '200', indexStatus: 'COMPLETE' } },
+              { data: { id: 'D', type: 'BASIC', balance: '300', indexStatus: 'COMPLETE' } },
+              { data: { id: 'C', type: 'BASIC', balance: '400', indexStatus: 'COMPLETE' } },
+            ],
+            edges: [
+              { data: { id: 'A->B', source: 'A', target: 'B', txCount: 1, totalValue: '10' } },
+              { data: { id: 'B->D', source: 'B', target: 'D', txCount: 1, totalValue: '10' } },
+              { data: { id: 'B->C', source: 'B', target: 'C', txCount: 1, totalValue: '10' } },
+            ],
+          },
+          stats: { nodeCount: 4, edgeCount: 3, maxHops: 3, shortestPath: 2, directed: false },
+        })
+      );
+
+      const { findPath } = useGraphStore.getState();
+      await findPath('A', 'D');
+
+      const state = useGraphStore.getState();
+      expect(state.pathView.pathNodeOrder).toEqual(['A', 'B', 'D', 'C']);
+      expect(state.pathView.from).toBe('A');
+      expect(state.pathView.to).toBe('D');
     });
 
     test('findPath shows error when no path found', async () => {

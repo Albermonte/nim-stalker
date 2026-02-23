@@ -41,8 +41,10 @@ interface GraphState {
   };
   pathView: {
     active: boolean;
+    from: string | null;
+    to: string | null;
     pathNodeIds: Set<string>;
-    pathNodeOrder: string[];  // Ordered array of node IDs for start/intermediate/end styling
+    pathNodeOrder: string[];  // Ordered array for layout behavior (not canonical endpoints)
     pathEdgeIds: Set<string>;
     savedNodes: Map<string, CytoscapeNode> | null;
     savedEdges: Map<string, CytoscapeEdge> | null;
@@ -80,7 +82,12 @@ interface GraphActions {
   setPathModeDirected: (directed: boolean) => void;
   clearGraph: () => void;
   getCytoscapeElements: () => { nodes: CytoscapeNode[]; edges: CytoscapeEdge[] };
-  enterPathView: (pathNodes: CytoscapeNode[], pathEdges: CytoscapeEdge[], stats?: { nodeCount: number; edgeCount: number; maxHops: number; shortestPath: number; directed: boolean }) => void;
+  enterPathView: (
+    pathNodes: CytoscapeNode[],
+    pathEdges: CytoscapeEdge[],
+    stats?: { nodeCount: number; edgeCount: number; maxHops: number; shortestPath: number; directed: boolean },
+    endpoints?: { from?: string | null; to?: string | null }
+  ) => void;
   exitPathView: () => void;
   clearLastExpanded: () => void;
   loadInitialData: () => Promise<void>;
@@ -110,6 +117,8 @@ const initialState: GraphState = {
   },
   pathView: {
     active: false,
+    from: null,
+    to: null,
     pathNodeIds: new Set(),
     pathNodeOrder: [],
     pathEdgeIds: new Set(),
@@ -400,7 +409,7 @@ export const useGraphStore = create<GraphState & GraphActions>()(
 
         if (result.subgraph) {
           // Enter path view mode with subgraph data and stats
-          enterPathView(result.subgraph.nodes, result.subgraph.edges, result.stats);
+          enterPathView(result.subgraph.nodes, result.subgraph.edges, result.stats, { from, to });
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to find path');
@@ -450,6 +459,8 @@ export const useGraphStore = create<GraphState & GraphActions>()(
         pathMode: { active: false, from: null, to: null, maxHops: 3, directed: false },
         pathView: {
           active: false,
+          from: null,
+          to: null,
           pathNodeIds: new Set(),
           pathNodeOrder: [],
           pathEdgeIds: new Set(),
@@ -460,7 +471,7 @@ export const useGraphStore = create<GraphState & GraphActions>()(
       });
     },
 
-    enterPathView: (pathNodes, pathEdges, stats) => {
+    enterPathView: (pathNodes, pathEdges, stats, endpoints) => {
       const state = get();
 
       // Save current graph state
@@ -487,6 +498,9 @@ export const useGraphStore = create<GraphState & GraphActions>()(
         pathEdgeIds.add(edge.data.id);
       }
 
+      const resolvedFrom = endpoints?.from ?? pathNodeOrder[0] ?? null;
+      const resolvedTo = endpoints?.to ?? pathNodeOrder[pathNodeOrder.length - 1] ?? null;
+
       set({
         nodes: pathNodesMap,
         edges: pathEdgesMap,
@@ -494,6 +508,8 @@ export const useGraphStore = create<GraphState & GraphActions>()(
         selectedEdgeId: null,
         pathView: {
           active: true,
+          from: resolvedFrom,
+          to: resolvedTo,
           pathNodeIds,
           pathNodeOrder,
           pathEdgeIds,
@@ -519,6 +535,8 @@ export const useGraphStore = create<GraphState & GraphActions>()(
         selectedEdgeId: null,
         pathView: {
           active: false,
+          from: null,
+          to: null,
           pathNodeIds: new Set(),
           pathNodeOrder: [],
           pathEdgeIds: new Set(),

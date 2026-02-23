@@ -997,17 +997,21 @@ export function GraphCanvas() {
       cy.nodes().removeClass('path-start path-end path-intermediate');
       cy.edges().removeClass('path-edge');
 
-      // Use ordered array for proper start/intermediate/end detection
       const pathOrder = pathView.pathNodeOrder;
-      if (pathOrder.length >= 2) {
-        // First node is start (periwinkle)
-        cy.getElementById(pathOrder[0]).addClass('path-start');
-        // Last node is end (pink)
-        cy.getElementById(pathOrder[pathOrder.length - 1]).addClass('path-end');
+      const pathStart = pathView.from ?? pathOrder[0] ?? null;
+      const pathEnd = pathView.to ?? pathOrder[pathOrder.length - 1] ?? null;
 
-        // All nodes in between are intermediate (yellow)
-        for (let i = 1; i < pathOrder.length - 1; i++) {
-          cy.getElementById(pathOrder[i]).addClass('path-intermediate');
+      if (pathStart) {
+        cy.getElementById(pathStart).addClass('path-start');
+      }
+      if (pathEnd && pathEnd !== pathStart) {
+        cy.getElementById(pathEnd).addClass('path-end');
+      }
+
+      // Any non-endpoint node in the path view is intermediate.
+      for (const nodeId of pathOrder) {
+        if (nodeId !== pathStart && nodeId !== pathEnd) {
+          cy.getElementById(nodeId).addClass('path-intermediate');
         }
       }
 
@@ -1019,7 +1023,10 @@ export function GraphCanvas() {
 
     // Stabilize 2-node path views on initial load: force deterministic vertical positions.
     if (pathView.active && pathView.pathNodeOrder.length >= 2 && cy.nodes().length === 2) {
-      const positions = computeTinyPathPositions(pathView.pathNodeOrder);
+      const tinyPathOrder = (pathView.from && pathView.to)
+        ? [pathView.from, pathView.to]
+        : pathView.pathNodeOrder;
+      const positions = computeTinyPathPositions(tinyPathOrder);
       cy.batch(() => {
         cy.nodes().forEach((n) => {
           const pos = positions.get(n.id());
@@ -1030,7 +1037,7 @@ export function GraphCanvas() {
     }
 
     prevNodeCountRef.current = currentNodeCount;
-  }, [nodes, edges, pathView.active, pathView.pathNodeOrder, pathView.pathEdgeIds, clearLastExpanded, layoutMode]);
+  }, [nodes, edges, pathView.active, pathView.from, pathView.to, pathView.pathNodeOrder, pathView.pathEdgeIds, clearLastExpanded, layoutMode]);
 
   // Highlight edges connected to selected node with direction-based colors
   useEffect(() => {

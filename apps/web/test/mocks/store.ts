@@ -28,6 +28,8 @@ export interface MockGraphStore {
   // Path view state
   pathView: {
     active: boolean;
+    from: string | null;
+    to: string | null;
     pathNodeIds: Set<string>;
     pathEdgeIds: Set<string>;
     pathNodeOrder: string[];
@@ -93,6 +95,8 @@ export function createMockStore(overrides: Partial<MockGraphStore> = {}): MockGr
 
     pathView: {
       active: false,
+      from: null,
+      to: null,
       pathNodeIds: new Set(),
       pathEdgeIds: new Set(),
       pathNodeOrder: [],
