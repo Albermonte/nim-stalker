@@ -619,12 +619,20 @@ export function GraphCanvas() {
         if (shouldUseTwoNodePresetLayout({
           pathViewActive: pathView.active,
           nodeCount: freshNodeCount,
-          edgeCount: cy.edges().length,
         })) {
-          const onlyEdge = cy.edges()[0];
-          const sourceId = onlyEdge.source().id();
-          const targetId = onlyEdge.target().id();
-          const positions = computeTinyPathPositions([sourceId, targetId]);
+          const nodeIds = cy.nodes().map((n) => n.id());
+          const firstEdge = cy.edges()[0];
+
+          let orderedIds: [string, string] = [nodeIds[0], nodeIds[1]];
+          if (firstEdge) {
+            const sourceId = firstEdge.source().id();
+            const targetId = firstEdge.target().id();
+            if (sourceId !== targetId && nodeIds.includes(sourceId) && nodeIds.includes(targetId)) {
+              orderedIds = [sourceId, targetId];
+            }
+          }
+
+          const positions = computeTinyPathPositions(orderedIds);
 
           cy.nodes().forEach((n) => {
             const pos = positions.get(n.id());

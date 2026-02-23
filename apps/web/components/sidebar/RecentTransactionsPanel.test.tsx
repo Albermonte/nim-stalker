@@ -1,5 +1,5 @@
 import React from 'react';
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { render, screen, waitFor } from '@/test/helpers/render';
 
 const invalidateCacheMock = mock(() => {});
@@ -31,9 +31,35 @@ mock.module('@/lib/api', () => ({
 import { RecentTransactionsPanel } from './RecentTransactionsPanel';
 
 describe('RecentTransactionsPanel', () => {
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  const setIntervalMock = mock((handler: TimerHandler, timeout?: number) => {
+    return originalSetInterval(handler, timeout);
+  });
+  const clearIntervalMock = mock((id: number) => {
+    originalClearInterval(id);
+  });
+
   beforeEach(() => {
     invalidateCacheMock.mockClear();
     getRecentTransactionsMock.mockClear();
+    setIntervalMock.mockClear();
+    clearIntervalMock.mockClear();
+    globalThis.setInterval = setIntervalMock as unknown as typeof globalThis.setInterval;
+    globalThis.clearInterval = clearIntervalMock as unknown as typeof globalThis.clearInterval;
+    window.setInterval = setIntervalMock as unknown as typeof window.setInterval;
+    window.clearInterval = clearIntervalMock as unknown as typeof window.clearInterval;
+  });
+
+  afterEach(() => {
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+    window.setInterval = originalSetInterval;
+    window.clearInterval = originalClearInterval;
+  });
+
+  afterAll(() => {
+    mock.restore();
   });
 
   test('refreshes only recent transactions feed', async () => {
@@ -44,8 +70,11 @@ describe('RecentTransactionsPanel', () => {
     expect(getRecentTransactionsMock.mock.calls[0]?.[0]).toEqual({ page: 1, pageSize: 50 });
     expect(invalidateCacheMock).toHaveBeenCalledWith('/transactions/recent');
     expect(invalidateCacheMock).not.toHaveBeenCalledWith('/graph/latest');
+    const intervalTimeouts = setIntervalMock.mock.calls.map(([, timeout]) => timeout);
+    expect(intervalTimeouts).toContain(30_000);
     expect(screen.getByText(/Recent Transactions/i)).toBeInTheDocument();
 
     view.unmount();
+    expect(clearIntervalMock.mock.calls.length).toBeGreaterThan(0);
   });
 });

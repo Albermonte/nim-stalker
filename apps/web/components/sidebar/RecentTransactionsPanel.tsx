@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
+import { HOME_REFRESH_INTERVAL_MS } from '@/lib/home-refresh';
 import { formatDate, formatNimiq, truncateAddress } from '@/lib/format-utils';
 import { buildTxRoute } from '@/lib/url-utils';
 
@@ -18,7 +19,7 @@ type RecentTx = {
 };
 
 const HOME_RECENT_LIMIT = 50;
-const POLL_INTERVAL_MS = 10_000;
+const POLL_INTERVAL_MS = HOME_REFRESH_INTERVAL_MS;
 
 export function RecentTransactionsPanel() {
   const [txs, setTxs] = useState<RecentTx[]>([]);
