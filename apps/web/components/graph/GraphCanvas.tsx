@@ -90,15 +90,6 @@ const stylesheet: cytoscape.StylesheetStyle[] = [
     },
   },
   {
-    selector: 'node.path-intermediate',
-    style: {
-      'overlay-padding': 8,
-      'overlay-color': '#FACC15',
-      'overlay-opacity': 0.3,
-      'overlay-shape': 'ellipse',
-    },
-  },
-  {
     selector: 'edge',
     style: {
       // Dynamic width based on transaction count: 1 tx → 3px, 300+ tx → 15px
@@ -142,10 +133,18 @@ const stylesheet: cytoscape.StylesheetStyle[] = [
     },
   },
   {
-    selector: 'edge.path-edge',
+    selector: 'edge.path-outgoing',
     style: {
-      'line-color': '#8B8BF5', // Periwinkle for path
-      'target-arrow-color': '#8B8BF5',
+      'line-color': '#FF69B4', // Pink for outgoing
+      'target-arrow-color': '#FF69B4',
+      // Inherits dynamic width from base edge selector
+    },
+  },
+  {
+    selector: 'edge.path-incoming',
+    style: {
+      'line-color': '#22C55E', // Green for incoming
+      'target-arrow-color': '#22C55E',
       // Inherits dynamic width from base edge selector
     },
   },
@@ -991,8 +990,8 @@ export function GraphCanvas() {
     // Apply path view styling
     if (pathView.active && pathView.pathNodeOrder.length > 0) {
       // Clear previous path classes
-      cy.nodes().removeClass('path-start path-end path-intermediate');
-      cy.edges().removeClass('path-edge');
+      cy.nodes().removeClass('path-start path-end');
+      cy.edges().removeClass('path-outgoing path-incoming');
 
       const pathOrder = pathView.pathNodeOrder;
       const pathStart = pathView.from ?? pathOrder[0] ?? null;
@@ -1005,16 +1004,68 @@ export function GraphCanvas() {
         cy.getElementById(pathEnd).addClass('path-end');
       }
 
-      // Any non-endpoint node in the path view is intermediate.
-      for (const nodeId of pathOrder) {
-        if (nodeId !== pathStart && nodeId !== pathEnd) {
-          cy.getElementById(nodeId).addClass('path-intermediate');
+      // Color path edges by tx direction relative to path start.
+      // Away from start => outgoing (pink), toward start => incoming (green).
+      const distances = new Map<string, number>();
+      if (pathStart) {
+        const adjacency = new Map<string, Set<string>>();
+
+        pathView.pathEdgeIds.forEach((edgeId) => {
+          const edge = cy.getElementById(edgeId);
+          if (!edge.length) return;
+          const source = edge.data('source') as string;
+          const target = edge.data('target') as string;
+
+          if (!adjacency.has(source)) adjacency.set(source, new Set());
+          if (!adjacency.has(target)) adjacency.set(target, new Set());
+          adjacency.get(source)!.add(target);
+          adjacency.get(target)!.add(source);
+        });
+
+        const queue: string[] = [pathStart];
+        distances.set(pathStart, 0);
+
+        while (queue.length > 0) {
+          const current = queue.shift()!;
+          const currentDistance = distances.get(current)!;
+          const neighbors = adjacency.get(current);
+          if (!neighbors) continue;
+
+          for (const neighbor of neighbors) {
+            if (!distances.has(neighbor)) {
+              distances.set(neighbor, currentDistance + 1);
+              queue.push(neighbor);
+            }
+          }
         }
       }
 
-      // Style path edges
       pathView.pathEdgeIds.forEach((edgeId) => {
-        cy.getElementById(edgeId).addClass('path-edge');
+        const edge = cy.getElementById(edgeId);
+        if (!edge.length) return;
+
+        const source = edge.data('source') as string;
+        const target = edge.data('target') as string;
+        const sourceDistance = distances.get(source);
+        const targetDistance = distances.get(target);
+
+        if (sourceDistance != null && targetDistance != null) {
+          if (sourceDistance < targetDistance) {
+            edge.addClass('path-outgoing');
+            return;
+          }
+          if (sourceDistance > targetDistance) {
+            edge.addClass('path-incoming');
+            return;
+          }
+        }
+
+        // Fallback when distances are equal/unavailable.
+        if (pathStart && target === pathStart) {
+          edge.addClass('path-incoming');
+          return;
+        }
+        edge.addClass('path-outgoing');
       });
     }
 
