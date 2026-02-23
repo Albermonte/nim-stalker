@@ -176,8 +176,6 @@ export class ApiClient {
       balance: string;
       firstSeenAt?: string;
       lastSeenAt?: string;
-      indexStatus: string;
-      indexedAt?: string;
       txCount?: number;
     };
 

@@ -12,7 +12,6 @@ const mockExpandEdgeRecord = {
         label: null,
         type: 'BASIC',
         balance: '50000',
-        indexStatus: 'COMPLETE',
         txCount: 10,
       },
     });
@@ -36,7 +35,6 @@ const mockSeedNodeRecord = {
       label: null,
       type: 'BASIC',
       balance: '50000',
-      indexStatus: 'COMPLETE',
       txCount: 10,
     };
     return data[key];
@@ -50,7 +48,6 @@ const mockNodeRecord = {
       label: null,
       type: 'BASIC',
       balance: '50000',
-      indexStatus: 'COMPLETE',
       txCount: 10,
     };
     return data[key];
@@ -138,7 +135,6 @@ describe('GraphService', () => {
       expect(node.data).toHaveProperty('label');
       expect(node.data).toHaveProperty('type');
       expect(node.data).toHaveProperty('balance');
-      expect(node.data).toHaveProperty('indexStatus');
       expect(node.data).toHaveProperty('txCount');
     });
 

@@ -70,7 +70,6 @@ export function createCytoscapeNode(id: string, type = 'BASIC', balance = 0n) {
       label: id,
       type,
       balance: balance.toString(),
-      indexStatus: 'COMPLETE' as const,
       txCount: 0,
     },
   };
@@ -121,15 +120,13 @@ export function createMockEdgeAggregate(
 export function createMockAddress(
   id: string,
   type = 'BASIC',
-  balance = 0n,
-  indexStatus = 'COMPLETE'
+  balance = 0n
 ) {
   return {
     id,
     type,
     balance,
     label: null,
-    indexStatus,
     txCount: 0,
     firstSeenAt: null,
     lastSeenAt: null,

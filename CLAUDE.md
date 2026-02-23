@@ -48,14 +48,14 @@ nim-stalker/
 ```
 
 **Neo4j Graph Model:**
-- `(:Address {id, type, label, balance, firstSeenAt, lastSeenAt, indexStatus, indexedAt})` — nodes
+- `(:Address {id, type, label, balance, firstSeenAt, lastSeenAt, txCount})` — nodes
 - `[:TRANSACTION {hash, value, fee, blockNumber, timestamp, data}]` — raw transaction relationships
 - `[:TRANSACTED_WITH {txCount, totalValue, firstTxAt, lastTxAt}]` — pre-aggregated edge summaries
 - `(:Meta {key, lastProcessedBatch, totalTransactionsIndexed, updatedAt})` — blockchain indexer state
 
 **Constraints/Indexes** (created at startup via `ensureConstraints()`):
 - Unique: `Address.id`, `TRANSACTION.hash`
-- Index: `Address.indexStatus`, `TRANSACTION.timestamp`, `TRANSACTION.blockNumber`, `TRANSACTED_WITH.txCount`
+- Index: `TRANSACTION.timestamp`, `TRANSACTION.blockNumber`, `TRANSACTED_WITH.txCount`
 
 **API Routes:** `GET /health`, `GET|POST /address/:addr[/transactions|/index]`, `GET /transaction/:hash`, `POST /graph/expand`, `GET /graph/path|subgraph|nodes|latest-blocks`, `GET /jobs`, `WS /jobs/ws`, `GET /indexer/status`
 <!-- END AUTO-MANAGED -->
@@ -72,7 +72,7 @@ nim-stalker/
 
 **Services:** Singleton factories (`getNimiqService()`, `getGraphService()`, etc.), lazy initialization
 
-**Types:** Shared in `@nim-stalker/shared` (AddressType, IndexStatus enums), Elysia `t.Object()` for validation. Web tsconfig excludes `test/`, `**/*.test.ts`, `**/*.test.tsx` from compilation (tests run via Bun natively).
+**Types:** Shared in `@nim-stalker/shared` (AddressType enum), Elysia `t.Object()` for validation. Web tsconfig excludes `test/`, `**/*.test.ts`, `**/*.test.tsx` from compilation (tests run via Bun natively).
 
 **Neo4j Driver:**
 - `neo4j.ts` exports: `getDriver()`, `readTx(work)`, `writeTx(work)`, `toNumber()`, `toBigIntString()`, `toDate()`, `toISOString()`, `ensureConstraints()`, `closeDriver()`
@@ -123,7 +123,7 @@ nim-stalker/
 
 **Graph Format (Cytoscape.js):**
 ```typescript
-{ nodes: [{ data: { id, label, type, balance, indexStatus, txCount } }],
+{ nodes: [{ data: { id, label, type, balance, txCount } }],
   edges: [{ data: { id, source, target, txCount, totalValue, firstTxAt, lastTxAt } }] }
 ```
 
@@ -134,7 +134,7 @@ nim-stalker/
 
 **Graph Expansion:** Direction (`incoming|outgoing|both`), filters (timestamp/value/limit), batch transaction counting via `batchCountTransactions()`
 
-**Address Indexing:** Status flow: PENDING → INDEXING → COMPLETE|ERROR. Fetches account + transactions via Nimiq JSON-RPC (`getAccountByAddress`, `getTransactionsByAddress` with cursor pagination), stores as TRANSACTION relationships, aggregates into TRANSACTED_WITH edges. Supports incremental re-indexing (fetches only new transactions when status is already COMPLETE).
+**Address Indexing:** Batch backfill + live subscription ingest transactions into `TRANSACTION` relationships and maintain `TRANSACTED_WITH` aggregates plus address metadata (`balance`, `txCount`).
 
 **Frontend Visualization:**
 - Dynamic import `ssr: false`, three layout modes selectable via UI toggle:

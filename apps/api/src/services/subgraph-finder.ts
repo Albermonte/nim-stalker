@@ -104,7 +104,6 @@ export class SubgraphFinder {
             icon: labelService.getIcon(id) || undefined,
             type: (props.type as string) || 'UNKNOWN',
             balance: toBigIntString(props.balance),
-            indexStatus: (props.indexStatus as string) || 'PENDING',
             txCount: toNumber(props.txCount),
           },
         };

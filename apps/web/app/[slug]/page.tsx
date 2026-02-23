@@ -8,7 +8,7 @@ import { api } from '@/lib/api';
 import { formatNimiqAddress, truncateAddress } from '@/lib/format-utils';
 import { isAddressSlug, isTxHashSlug, urlSlugToAddress } from '@/lib/url-utils';
 import { GraphShell } from '@/components/GraphShell';
-import { AddressType, IndexStatus, type CytoscapeNode, type CytoscapeEdge } from '@nim-stalker/shared';
+import { AddressType, type CytoscapeNode, type CytoscapeEdge } from '@nim-stalker/shared';
 
 export default function SlugPage() {
   const { slug } = useParams<{ slug: string }>();
@@ -61,7 +61,6 @@ async function handleTxHash(hash: string) {
           label: truncateAddress(fromFormatted),
           type: AddressType.BASIC,
           balance: '0',
-          indexStatus: IndexStatus.PENDING,
         },
       },
       {
@@ -70,7 +69,6 @@ async function handleTxHash(hash: string) {
           label: truncateAddress(toFormatted),
           type: AddressType.BASIC,
           balance: '0',
-          indexStatus: IndexStatus.PENDING,
         },
       },
     ];

@@ -53,7 +53,7 @@ export const addressRoutes = new Elysia({ prefix: '/address' })
           address = await writeTx(async (tx) => {
             const result = await tx.run(
               `MERGE (a:Address {id: $id})
-               ON CREATE SET a.type = $type, a.balance = $balance, a.indexStatus = 'PENDING'
+               ON CREATE SET a.type = $type, a.balance = $balance
                RETURN a`,
               { id: formattedAddr, type, balance }
             );
@@ -70,14 +70,10 @@ export const addressRoutes = new Elysia({ prefix: '/address' })
           balance: toBigIntString(address.balance),
           firstSeenAt: toISOString(address.firstSeenAt),
           lastSeenAt: toISOString(address.lastSeenAt),
-          indexStatus: address.indexStatus || 'PENDING',
-          indexedAt: toISOString(address.indexedAt),
           txCount: toNumber(address.txCount),
         };
 
-        if (address.indexStatus === 'COMPLETE') {
-          addressCache.set(formattedAddr, response);
-        }
+        addressCache.set(formattedAddr, response);
 
         return response;
       } catch (error) {

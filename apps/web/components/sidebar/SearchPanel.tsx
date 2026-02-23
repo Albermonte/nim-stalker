@@ -129,7 +129,7 @@ function SearchPanelInner() {
         </div>
 
         <p className="mt-3 text-xs uppercase tracking-wide opacity-80">
-          Indexes address and expands its connections.
+          Expands graph connections for the entered address.
         </p>
       </div>
 

@@ -573,28 +573,3 @@ export async function updateAddressBalances(
     });
   }
 }
-
-/**
- * Mark all backfilled addresses (have TRANSACTION relationships but no indexStatus) as COMPLETE.
- * Run after backfill completes and on every startup as self-healing.
- */
-export async function markBackfilledAddressesComplete(): Promise<number> {
-  // Batched: uses CALL {} IN TRANSACTIONS to avoid a single large write tx
-  // when 100K+ addresses need updating after a full backfill.
-  const res = await runAutoCommit(
-    `MATCH (a:Address)
-     WHERE a.indexStatus IS NULL
-       AND EXISTS { (a)-[:TRANSACTION]-() }
-     WITH a, $now AS now
-     CALL {
-       WITH a, now
-       SET a.indexStatus = 'COMPLETE',
-           a.indexedAt = now
-     } IN TRANSACTIONS OF 10000 ROWS
-     RETURN count(a) AS updated`,
-    { now: new Date().toISOString() }
-  );
-  const result = toNumber(res.records[0]?.get('updated')) || 0;
-  if (result > 0) console.log(`[backfill] Marked ${result} addresses as COMPLETE`);
-  return result;
-}

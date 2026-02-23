@@ -1,6 +1,6 @@
 import { type Block, type Subscription, BlockType } from '@albermonte/nimiq-rpc-client-ts'
 import { ensureRpcClient, getRpcClient, mapTransaction, unwrap } from './rpc-client'
-import { type AggregateDelta, rebuildAllEdgeAggregates, writeTransactionBatch, updateEdgeAggregatesFromDeltas, markBackfilledAddressesComplete, updateAddressBalances } from './indexing'
+import { type AggregateDelta, rebuildAllEdgeAggregates, writeTransactionBatch, updateEdgeAggregatesFromDeltas, updateAddressBalances } from './indexing'
 import { readTx, toNumber } from '../lib/neo4j'
 import { config } from '../lib/config'
 import { openIndexerDb, type IndexerDb } from '../lib/indexer-db'
@@ -459,9 +459,6 @@ async function runBackfill(): Promise<void> {
   const db = indexerDb!
   const client = getRpcClient()
 
-  // Self-healing: mark backfilled addresses from prior runs
-  await markBackfilledAddressesComplete()
-
   state.lastProcessedBatch = db.getLastIndexedBatch()
   recomputeContiguousFromStart(db, state.lastProcessedBatch)
   let currentBatch = await waitForRpc()
@@ -656,7 +653,6 @@ async function runBackfill(): Promise<void> {
     console.log('[backfill] Aggregate rebuild complete')
   }
 
-  await markBackfilledAddressesComplete()
   state.lastProcessedBatch = db.getLastIndexedBatch()
   recomputeContiguousFromStart(db, state.lastProcessedBatch)
   state.backfillComplete = true

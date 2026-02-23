@@ -81,7 +81,6 @@ export class PathFinder {
             icon: labelService.getIcon(id) || undefined,
             type: (node.properties.type as string) || 'UNKNOWN',
             balance: toBigIntString(node.properties.balance),
-            indexStatus: (node.properties.indexStatus as string) || 'PENDING',
             txCount: toNumber(node.properties.txCount),
           },
         });

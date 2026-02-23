@@ -343,7 +343,7 @@ export const useGraphStore = create<GraphState & GraphActions>()(
       setError(null);
 
       try {
-        // Fetch address info from API (creates PENDING entry if needed)
+        // Fetch address metadata from API and add it as a node
         const addressData = await api.getAddress(formattedAddress);
 
         // Create node and add to graph
@@ -354,7 +354,6 @@ export const useGraphStore = create<GraphState & GraphActions>()(
             icon: addressData.icon,
             type: addressData.type as NodeData['type'],
             balance: addressData.balance,
-            indexStatus: addressData.indexStatus as NodeData['indexStatus'],
             txCount: addressData.txCount,
           },
         };

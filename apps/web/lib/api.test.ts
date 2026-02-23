@@ -60,7 +60,6 @@ class TestableApiClient {
       id: string;
       type: string;
       balance: string;
-      indexStatus: string;
     };
 
     const cacheKey = `address:${address}`;
@@ -197,7 +196,6 @@ describe('ApiClient', () => {
         id: 'NQ42TEST',
         type: 'BASIC',
         balance: '1000000',
-        indexStatus: 'COMPLETE',
       };
 
       mockFetch.mockImplementation(() =>
@@ -223,7 +221,6 @@ describe('ApiClient', () => {
         id: 'NQ42TEST',
         type: 'BASIC',
         balance: '1000000',
-        indexStatus: 'COMPLETE',
       };
 
       mockFetch.mockImplementation(() =>

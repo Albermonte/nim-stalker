@@ -176,3 +176,43 @@ describe('GET /address/:addr/transactions', () => {
     expect(windowParams).toHaveProperty('requestedRows');
   });
 });
+
+describe('GET /address/:addr', () => {
+  beforeEach(() => {
+    mockRun.mockClear();
+  });
+
+  test('does not expose legacy index status fields', async () => {
+    mockRun.mockImplementation((query: string) => {
+      if (query.includes('MATCH (a:Address {id: $id}) RETURN a')) {
+        return Promise.resolve({
+          records: [{
+            get: (key: string) => key === 'a'
+              ? {
+                  properties: {
+                    id: validAddresses.basic,
+                    type: 'BASIC',
+                    balance: '100000',
+                    txCount: 3,
+                    indexStatus: 'COMPLETE',
+                    indexedAt: '2025-01-01T00:00:00.000Z',
+                  },
+                }
+              : null,
+          }],
+        });
+      }
+      return Promise.resolve({ records: [] });
+    });
+
+    const response = await app.handle(
+      new Request(`http://localhost/address/${encodeURIComponent(validAddresses.basic)}`)
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toHaveProperty('id', validAddresses.basic);
+    expect(body).not.toHaveProperty('indexStatus');
+    expect(body).not.toHaveProperty('indexedAt');
+  });
+});

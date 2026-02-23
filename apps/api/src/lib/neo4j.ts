@@ -113,7 +113,6 @@ export async function ensureConstraints(): Promise<void> {
       'CREATE CONSTRAINT address_id IF NOT EXISTS FOR (a:Address) REQUIRE a.id IS UNIQUE',
       'CREATE CONSTRAINT transaction_hash IF NOT EXISTS FOR ()-[t:TRANSACTION]-() REQUIRE t.hash IS UNIQUE',
       // Indexes for common lookups
-      'CREATE INDEX address_index_status IF NOT EXISTS FOR (a:Address) ON (a.indexStatus)',
       'CREATE INDEX transaction_timestamp IF NOT EXISTS FOR ()-[t:TRANSACTION]-() ON (t.timestamp)',
       'CREATE INDEX transaction_block IF NOT EXISTS FOR ()-[t:TRANSACTION]-() ON (t.blockNumber)',
       'CREATE INDEX transacted_with_tx_count IF NOT EXISTS FOR ()-[r:TRANSACTED_WITH]-() ON (r.txCount)',
@@ -123,8 +122,6 @@ export async function ensureConstraints(): Promise<void> {
       'CREATE INDEX transacted_with_total_value IF NOT EXISTS FOR ()-[r:TRANSACTED_WITH]-() ON (r.totalValue)',
       // TRANSACTION value index (used in address transaction listing with value filters)
       'CREATE INDEX transaction_value IF NOT EXISTS FOR ()-[t:TRANSACTION]-() ON (t.value)',
-      // Composite index: Address id + indexStatus (used for pending lookups during indexing)
-      'CREATE INDEX address_id_status IF NOT EXISTS FOR (a:Address) ON (a.id, a.indexStatus)',
       // Meta node for indexer state (lastProcessedBatch, etc.)
       'CREATE CONSTRAINT meta_key_unique IF NOT EXISTS FOR (m:Meta) REQUIRE m.key IS UNIQUE',
     ];

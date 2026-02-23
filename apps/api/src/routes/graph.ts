@@ -310,7 +310,6 @@ export const graphRoutes = new Elysia({ prefix: '/graph' })
             icon: labelService.getIcon(id) || undefined,
             type: 'UNKNOWN',
             balance: '0',
-            indexStatus: 'PENDING',
             txCount: 0,
           },
         }));

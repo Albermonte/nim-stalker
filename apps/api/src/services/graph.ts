@@ -80,7 +80,7 @@ export class GraphService {
       const seedResult = await tx.run(
         `MATCH (a:Address) WHERE a.id IN $addresses
          RETURN a.id AS id, a.label AS label, a.type AS type,
-                a.balance AS balance, a.indexStatus AS indexStatus, a.txCount AS txCount`,
+                a.balance AS balance, a.txCount AS txCount`,
         { addresses }
       );
 
@@ -90,7 +90,7 @@ export class GraphService {
     // Collect nodes from edge results (dedup by id)
     const nodeMap = new Map<string, {
       id: string; label: string | null; type: string;
-      balance: string; indexStatus: string; txCount: number;
+      balance: string; txCount: number;
     }>();
 
     // Add seed nodes first
@@ -101,7 +101,6 @@ export class GraphService {
         label: rec.get('label') as string | null,
         type: (rec.get('type') as string) || 'UNKNOWN',
         balance: toBigIntString(rec.get('balance')),
-        indexStatus: (rec.get('indexStatus') as string) || 'PENDING',
         txCount: toNumber(rec.get('txCount')),
       });
     }
@@ -126,7 +125,6 @@ export class GraphService {
           label: fromProps.label as string | null,
           type: (fromProps.type as string) || 'UNKNOWN',
           balance: toBigIntString(fromProps.balance),
-          indexStatus: (fromProps.indexStatus as string) || 'PENDING',
           txCount: toNumber(fromProps.txCount),
         });
       }
@@ -136,7 +134,6 @@ export class GraphService {
           label: toProps.label as string | null,
           type: (toProps.type as string) || 'UNKNOWN',
           balance: toBigIntString(toProps.balance),
-          indexStatus: (toProps.indexStatus as string) || 'PENDING',
           txCount: toNumber(toProps.txCount),
         });
       }
@@ -159,7 +156,6 @@ export class GraphService {
         icon: labelService.getIcon(details.id) || undefined,
         type: details.type,
         balance: details.balance,
-        indexStatus: details.indexStatus,
         txCount: details.txCount,
       },
     }));
@@ -193,7 +189,6 @@ export class GraphService {
         icon: labelService.getIcon(addr.id) || undefined,
         type: addr.type,
         balance: addr.balance,
-        indexStatus: addr.indexStatus,
         txCount: addr.txCount,
       },
     }));
@@ -234,14 +229,13 @@ export class GraphService {
     label: string | null;
     type: string;
     balance: string;
-    indexStatus: string;
     txCount: number;
   }>> {
     return readTx(async (tx) => {
       const result = await tx.run(
         `MATCH (a:Address) WHERE a.id IN $ids
          RETURN a.id AS id, a.label AS label, a.type AS type,
-                a.balance AS balance, a.indexStatus AS indexStatus, a.txCount AS txCount`,
+                a.balance AS balance, a.txCount AS txCount`,
         { ids }
       );
 
@@ -250,7 +244,6 @@ export class GraphService {
         label: rec.get('label') as string | null,
         type: (rec.get('type') as string) || 'UNKNOWN',
         balance: toBigIntString(rec.get('balance')),
-        indexStatus: (rec.get('indexStatus') as string) || 'PENDING',
         txCount: toNumber(rec.get('txCount')),
       }));
     });

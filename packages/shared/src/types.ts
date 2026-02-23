@@ -7,13 +7,6 @@ export enum AddressType {
   UNKNOWN = 'UNKNOWN',
 }
 
-export enum IndexStatus {
-  PENDING = 'PENDING',
-  INDEXING = 'INDEXING',
-  COMPLETE = 'COMPLETE',
-  ERROR = 'ERROR',
-}
-
 // Direction for graph expansion
 export type Direction = 'incoming' | 'outgoing' | 'both';
 
@@ -40,7 +33,6 @@ export interface NodeData {
   icon?: string;
   type: AddressType;
   balance: string;
-  indexStatus: IndexStatus;
   txCount?: number;
 }
 
@@ -90,8 +82,6 @@ export interface AddressResponse {
   balance: string;
   firstSeenAt?: string;
   lastSeenAt?: string;
-  indexStatus: IndexStatus;
-  indexedAt?: string;
   txCount?: number;
 }
 

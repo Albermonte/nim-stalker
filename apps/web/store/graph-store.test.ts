@@ -16,14 +16,13 @@ const mockApi = {
       id: 'NQ42 TEST ADDR',
       type: 'BASIC',
       balance: '1000000',
-      indexStatus: 'COMPLETE',
       txCount: 10,
     })
   ),
   expandGraph: mock(() =>
     Promise.resolve({
       nodes: [
-        { data: { id: 'NODE1', type: 'BASIC', balance: '1000', indexStatus: 'COMPLETE' } },
+        { data: { id: 'NODE1', type: 'BASIC', balance: '1000' } },
       ],
       edges: [],
     })
@@ -33,8 +32,8 @@ const mockApi = {
       found: true,
       subgraph: {
         nodes: [
-          { data: { id: 'A', type: 'BASIC', balance: '100', indexStatus: 'COMPLETE' } },
-          { data: { id: 'B', type: 'BASIC', balance: '200', indexStatus: 'COMPLETE' } },
+          { data: { id: 'A', type: 'BASIC', balance: '100' } },
+          { data: { id: 'B', type: 'BASIC', balance: '200' } },
         ],
         edges: [{ data: { id: 'A->B', source: 'A', target: 'B', txCount: 5, totalValue: '1000' } }],
       },
@@ -44,7 +43,7 @@ const mockApi = {
   getLatestBlocksGraph: mock(() =>
     Promise.resolve({
       nodes: [
-        { data: { id: 'BLOCK_ADDR1', type: 'BASIC', balance: '0', indexStatus: 'PENDING' } },
+        { data: { id: 'BLOCK_ADDR1', type: 'BASIC', balance: '0' } },
       ],
       edges: [],
     })
@@ -100,8 +99,8 @@ describe('graph-store', () => {
     test('adds nodes to the store', () => {
       const { addNodes } = useGraphStore.getState();
       const nodes: CytoscapeNode[] = [
-        { data: { id: 'A', type: 'BASIC', balance: '100', indexStatus: 'COMPLETE' } },
-        { data: { id: 'B', type: 'BASIC', balance: '200', indexStatus: 'PENDING' } },
+        { data: { id: 'A', type: 'BASIC', balance: '100' } },
+        { data: { id: 'B', type: 'BASIC', balance: '200' } },
       ];
 
       addNodes(nodes);
@@ -115,8 +114,8 @@ describe('graph-store', () => {
     test('overwrites existing nodes with same id', () => {
       const { addNodes } = useGraphStore.getState();
 
-      addNodes([{ data: { id: 'A', type: 'BASIC', balance: '100', indexStatus: 'PENDING' } }]);
-      addNodes([{ data: { id: 'A', type: 'BASIC', balance: '999', indexStatus: 'COMPLETE' } }]);
+      addNodes([{ data: { id: 'A', type: 'BASIC', balance: '100' } }]);
+      addNodes([{ data: { id: 'A', type: 'BASIC', balance: '999' } }]);
 
       const state = useGraphStore.getState();
       expect(state.nodes.size).toBe(1);
@@ -144,13 +143,12 @@ describe('graph-store', () => {
     test('partially updates node data', () => {
       const { addNodes, updateNode } = useGraphStore.getState();
 
-      addNodes([{ data: { id: 'A', type: 'BASIC', balance: '100', indexStatus: 'PENDING' } }]);
-      updateNode('A', { balance: '999', indexStatus: 'COMPLETE' });
+      addNodes([{ data: { id: 'A', type: 'BASIC', balance: '100' } }]);
+      updateNode('A', { balance: '999' });
 
       const state = useGraphStore.getState();
       const node = state.nodes.get('A');
       expect(node?.data.balance).toBe('999');
-      expect(node?.data.indexStatus).toBe('COMPLETE');
       expect(node?.data.type).toBe('BASIC'); // Unchanged
     });
 
@@ -169,9 +167,9 @@ describe('graph-store', () => {
       const { addNodes, addEdges, removeNode } = useGraphStore.getState();
 
       addNodes([
-        { data: { id: 'A', type: 'BASIC', balance: '100', indexStatus: 'COMPLETE' } },
-        { data: { id: 'B', type: 'BASIC', balance: '200', indexStatus: 'COMPLETE' } },
-        { data: { id: 'C', type: 'BASIC', balance: '300', indexStatus: 'COMPLETE' } },
+        { data: { id: 'A', type: 'BASIC', balance: '100' } },
+        { data: { id: 'B', type: 'BASIC', balance: '200' } },
+        { data: { id: 'C', type: 'BASIC', balance: '300' } },
       ]);
 
       addEdges([
@@ -190,7 +188,7 @@ describe('graph-store', () => {
     test('clears selection if removed node was selected', () => {
       const { addNodes, selectNode, removeNode } = useGraphStore.getState();
 
-      addNodes([{ data: { id: 'A', type: 'BASIC', balance: '100', indexStatus: 'COMPLETE' } }]);
+      addNodes([{ data: { id: 'A', type: 'BASIC', balance: '100' } }]);
       selectNode('A');
       expect(useGraphStore.getState().selectedNodeId).toBe('A');
 
@@ -278,7 +276,7 @@ describe('graph-store', () => {
     test('resets all graph state', () => {
       const { addNodes, addEdges, selectNode, setFilters, clearGraph } = useGraphStore.getState();
 
-      addNodes([{ data: { id: 'A', type: 'BASIC', balance: '100', indexStatus: 'COMPLETE' } }]);
+      addNodes([{ data: { id: 'A', type: 'BASIC', balance: '100' } }]);
       addEdges([{ data: { id: 'E1', source: 'A', target: 'B', txCount: 1, totalValue: '10' } }]);
       selectNode('A');
       setFilters({ minTimestamp: 1000 });
@@ -300,8 +298,8 @@ describe('graph-store', () => {
       const { addNodes, addEdges, getCytoscapeElements } = useGraphStore.getState();
 
       addNodes([
-        { data: { id: 'A', type: 'BASIC', balance: '100', indexStatus: 'COMPLETE' } },
-        { data: { id: 'B', type: 'BASIC', balance: '200', indexStatus: 'COMPLETE' } },
+        { data: { id: 'A', type: 'BASIC', balance: '100' } },
+        { data: { id: 'B', type: 'BASIC', balance: '200' } },
       ]);
       addEdges([
         { data: { id: 'E1', source: 'A', target: 'B', txCount: 5, totalValue: '1000' } },
@@ -364,8 +362,8 @@ describe('graph-store', () => {
 
       // Add some initial nodes
       addNodes([
-        { data: { id: 'X', type: 'BASIC', balance: '100', indexStatus: 'COMPLETE' } },
-        { data: { id: 'Y', type: 'BASIC', balance: '200', indexStatus: 'COMPLETE' } },
+        { data: { id: 'X', type: 'BASIC', balance: '100' } },
+        { data: { id: 'Y', type: 'BASIC', balance: '200' } },
       ]);
       addEdges([
         { data: { id: 'X->Y', source: 'X', target: 'Y', txCount: 1, totalValue: '50' } },
@@ -373,8 +371,8 @@ describe('graph-store', () => {
 
       // Enter path view with different nodes
       const pathNodes: CytoscapeNode[] = [
-        { data: { id: 'A', type: 'BASIC', balance: '100', indexStatus: 'COMPLETE' } },
-        { data: { id: 'B', type: 'BASIC', balance: '200', indexStatus: 'COMPLETE' } },
+        { data: { id: 'A', type: 'BASIC', balance: '100' } },
+        { data: { id: 'B', type: 'BASIC', balance: '200' } },
       ];
       const pathEdges: CytoscapeEdge[] = [
         { data: { id: 'A->B', source: 'A', target: 'B', txCount: 5, totalValue: '1000' } },
@@ -399,12 +397,12 @@ describe('graph-store', () => {
 
       // Add initial nodes
       addNodes([
-        { data: { id: 'X', type: 'BASIC', balance: '100', indexStatus: 'COMPLETE' } },
+        { data: { id: 'X', type: 'BASIC', balance: '100' } },
       ]);
 
       // Enter path view
       enterPathView(
-        [{ data: { id: 'A', type: 'BASIC', balance: '50', indexStatus: 'COMPLETE' } }],
+        [{ data: { id: 'A', type: 'BASIC', balance: '50' } }],
         []
       );
 
@@ -424,7 +422,7 @@ describe('graph-store', () => {
       const { addNodes, exitPathView } = useGraphStore.getState();
 
       addNodes([
-        { data: { id: 'X', type: 'BASIC', balance: '100', indexStatus: 'COMPLETE' } },
+        { data: { id: 'X', type: 'BASIC', balance: '100' } },
       ]);
 
       exitPathView();
@@ -439,7 +437,7 @@ describe('graph-store', () => {
       const { addNodes, expandNode } = useGraphStore.getState();
 
       addNodes([
-        { data: { id: 'CENTER', type: 'BASIC', balance: '100', indexStatus: 'COMPLETE' } },
+        { data: { id: 'CENTER', type: 'BASIC', balance: '100' } },
       ]);
 
       await expandNode('CENTER', 'both');
@@ -487,7 +485,7 @@ describe('graph-store', () => {
       const { addNodes, loadInitialData } = useGraphStore.getState();
 
       addNodes([
-        { data: { id: 'EXISTING', type: 'BASIC', balance: '100', indexStatus: 'COMPLETE' } },
+        { data: { id: 'EXISTING', type: 'BASIC', balance: '100' } },
       ]);
 
       await loadInitialData();

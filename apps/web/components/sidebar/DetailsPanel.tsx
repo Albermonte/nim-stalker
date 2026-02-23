@@ -11,13 +11,6 @@ const TYPE_BADGE_STYLES: Record<string, string> = {
   STAKING: 'nq-tag-periwinkle',
 };
 
-const INDEX_STATUS_STYLES: Record<string, string> = {
-  COMPLETE: 'nq-tag-green',
-  INDEXING: 'nq-tag-yellow',
-  ERROR: 'nq-tag-red',
-  PENDING: 'nq-tag',
-};
-
 function DetailsPanelInner() {
   const { selectedNodeId, selectedEdgeId, nodes, edges, expandNode, loading } = useGraphStore();
 
@@ -78,13 +71,6 @@ function DetailsPanelInner() {
             <div>
               <label className="nq-label">Balance</label>
               <p className="text-sm font-bold font-mono">{formatNimiq(data.balance)}</p>
-            </div>
-
-            <div>
-              <label className="nq-label">Index Status</label>
-              <span className={INDEX_STATUS_STYLES[data.indexStatus] ?? 'nq-tag'}>
-                {data.indexStatus}
-              </span>
             </div>
 
             <div className="nq-divider"></div>

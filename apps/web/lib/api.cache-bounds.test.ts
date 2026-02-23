@@ -16,7 +16,6 @@ describe('ApiClient cache bounds', () => {
           id,
           type: 'BASIC',
           balance: '0',
-          indexStatus: 'COMPLETE',
         }),
       });
     });

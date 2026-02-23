@@ -225,7 +225,7 @@ nim-stalker/
 ```
 
 **Neo4j Graph Model:**
-- `(:Address)` — nodes with id, type, balance, indexStatus, txCount, timestamps
+- `(:Address)` — nodes with id, type, balance, txCount, timestamps
 - `[:TRANSACTED_WITH]` — aggregated edges with txCount, totalValue, txHashes array (for dedup)
 - `(:Meta)` — singleton node tracking blockchain indexer state (lastProcessedBatch, totalTransactionsIndexed)
 

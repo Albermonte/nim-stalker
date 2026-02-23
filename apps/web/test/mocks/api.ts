@@ -48,7 +48,6 @@ export function createMockAddressResponse(
     type: 'BASIC',
     balance: '0',
     label: null,
-    indexStatus: 'COMPLETE',
     txCount: 0,
     firstSeenAt: null,
     lastSeenAt: null,
@@ -69,7 +68,6 @@ export function createMockGraphResponse(
       label: `Node ${i}`,
       type: 'BASIC' as const,
       balance: '0',
-      indexStatus: 'COMPLETE' as const,
       txCount: 0,
     },
   }));
@@ -102,7 +100,6 @@ export function createMockPathResponse(
       label: id,
       type: 'BASIC' as const,
       balance: '0',
-      indexStatus: 'COMPLETE' as const,
       txCount: 0,
     },
   }));
@@ -142,7 +139,6 @@ export function createMockSubgraphResponse(
       label: id,
       type: 'BASIC' as const,
       balance: '0',
-      indexStatus: 'COMPLETE' as const,
       txCount: 0,
     },
   }));

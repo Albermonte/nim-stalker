@@ -142,7 +142,6 @@ export function createMockNode(
       label: id.slice(0, 12) + '...',
       type: 'BASIC',
       balance: '0',
-      indexStatus: 'PENDING',
       txCount: 0,
       ...overrides,
     },
