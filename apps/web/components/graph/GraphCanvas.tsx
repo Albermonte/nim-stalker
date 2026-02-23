@@ -29,127 +29,11 @@ import { getPathViewLayoutStrategy } from '@/lib/path-view-layout-strategy';
 import { registerUiExtensions, attachUiExtensions } from '@/lib/cytoscape-ui-extensions';
 import { CYTOSCAPE_UI_EXTENSION_MODULES } from '@/lib/cytoscape-ui-extension-modules';
 import { formatTooltipBalance, getNodeTxCount } from './tooltip-utils';
+import { graphStylesheet } from './graph-styles';
 
 // Register default layout statically (always needed)
 cytoscape.use(fcose);
 registerUiExtensions(cytoscape, CYTOSCAPE_UI_EXTENSION_MODULES);
-
-// NQ stylesheet - colorful, rounded, playful
-// Using 'any' for style objects because TypeScript types don't include all valid Cytoscape.js properties
-const stylesheet: cytoscape.StylesheetStyle[] = [
-  {
-    selector: 'node',
-    style: {
-      'background-opacity': 0,
-      'background-image': 'data(identicon)',
-      'background-fit': 'contain',
-      'background-clip': 'none',
-      'background-width': '100%',
-      'background-height': '100%',
-      'background-position-x': '50%',
-      'background-position-y': '50%',
-      'background-image-smoothing': 'yes',
-      label: 'data(label)',
-      color: '#000000',
-      'text-outline-color': '#FFFFFF',
-      'text-outline-width': 2,
-      'font-size': '11px',
-      'font-weight': 'bold',
-      'text-valign': 'bottom',
-      'text-halign': 'center',
-      'text-margin-y': 8,
-      width: 64,
-      height: 64,
-      shape: 'ellipse',
-    } as any,
-  },
-  {
-    selector: 'node:selected',
-    style: {
-      'overlay-padding': 8,
-      'overlay-color': '#FF69B4',
-      'overlay-opacity': 0.2,
-      'overlay-shape': 'ellipse',
-    },
-  },
-  {
-    selector: 'node.path-start',
-    style: {
-      'overlay-padding': 8,
-      'overlay-color': '#8B8BF5',
-      'overlay-opacity': 0.3,
-      'overlay-shape': 'ellipse',
-    },
-  },
-  {
-    selector: 'node.path-end',
-    style: {
-      'overlay-padding': 8,
-      'overlay-color': '#FF69B4',
-      'overlay-opacity': 0.3,
-      'overlay-shape': 'ellipse',
-    },
-  },
-  {
-    selector: 'edge',
-    style: {
-      // Dynamic width based on transaction count: 1 tx → 3px, 300+ tx → 15px
-      width: 'mapData(txCount, 1, 300, 3, 15)' as any,
-      'line-color': 'rgba(107, 114, 128, 0.3)',
-      'target-arrow-color': 'rgba(107, 114, 128, 0.3)',
-      'target-arrow-shape': 'triangle',
-      'curve-style': 'bezier',
-      'arrow-scale': 1.2,
-    },
-  },
-  {
-    selector: 'edge:selected',
-    style: {
-      'line-color': '#FF69B4', // NQ pink
-      'target-arrow-color': '#FF69B4',
-      'line-style': 'solid',
-      // Inherits dynamic width from base edge selector
-    },
-  },
-  {
-    selector: 'edge.outgoing-from-selected',
-    style: {
-      'line-color': '#FF69B4', // NQ pink for outgoing
-      'target-arrow-color': '#FF69B4',
-      // Inherits dynamic width from base edge selector
-    },
-  },
-  {
-    selector: 'edge.incoming-to-selected',
-    style: {
-      'line-color': '#22C55E', // Green for incoming
-      'target-arrow-color': '#22C55E',
-      // Inherits dynamic width from base edge selector
-    },
-  },
-  {
-    selector: 'edge.dimmed',
-    style: {
-      opacity: 0.2,
-    },
-  },
-  {
-    selector: 'edge.path-outgoing',
-    style: {
-      'line-color': '#FF69B4', // Pink for outgoing
-      'target-arrow-color': '#FF69B4',
-      // Inherits dynamic width from base edge selector
-    },
-  },
-  {
-    selector: 'edge.path-incoming',
-    style: {
-      'line-color': '#22C55E', // Green for incoming
-      'target-arrow-color': '#22C55E',
-      // Inherits dynamic width from base edge selector
-    },
-  },
-];
 
 
 // Tooltip component for node hover
@@ -1136,7 +1020,7 @@ export function GraphCanvas() {
     <div ref={containerRef} className="graph-container w-full h-full relative">
       <CytoscapeComponent
         elements={cytoscapeElements}
-        stylesheet={stylesheet}
+        stylesheet={graphStylesheet}
         style={{ width: '100%', height: '100%' }}
         cy={handleCyInit}
       />
