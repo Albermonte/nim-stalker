@@ -26,6 +26,7 @@ import { computeBiFlowPositions } from '@/lib/layout-biflow';
 import { identiconManager } from '@/lib/identicon-manager';
 import { computeGraphHash, saveLayoutPositions, getLayoutPositions } from '@/lib/layout-cache';
 import { getPathViewLayoutStrategy } from '@/lib/path-view-layout-strategy';
+import { shouldUseTwoNodePresetLayout } from '@/lib/initial-layout-strategy';
 import { registerUiExtensions, attachUiExtensions } from '@/lib/cytoscape-ui-extensions';
 import { CYTOSCAPE_UI_EXTENSION_MODULES } from '@/lib/cytoscape-ui-extension-modules';
 import { formatTooltipBalance, getNodeTxCount } from './tooltip-utils';
@@ -614,6 +615,32 @@ export function GraphCanvas() {
           pathNodeOrderLength: pathView.pathNodeOrder.length,
           layoutMode,
         });
+
+        if (shouldUseTwoNodePresetLayout({
+          pathViewActive: pathView.active,
+          nodeCount: freshNodeCount,
+          edgeCount: cy.edges().length,
+        })) {
+          const onlyEdge = cy.edges()[0];
+          const sourceId = onlyEdge.source().id();
+          const targetId = onlyEdge.target().id();
+          const positions = computeTinyPathPositions([sourceId, targetId]);
+
+          cy.nodes().forEach((n) => {
+            const pos = positions.get(n.id());
+            if (pos) n.scratch('_twoNodePos', pos);
+          });
+
+          const layout = cy.layout({
+            name: 'preset',
+            fit: true,
+            padding: 140,
+            animate: false,
+            positions: (node: any) => node.scratch('_twoNodePos') || node.position(),
+          } as any);
+          trackAndRun(layout);
+          return;
+        }
 
         if (pathLayoutStrategy === 'tiny') {
           // Path view tiny-path override: force deterministic vertical positions.
