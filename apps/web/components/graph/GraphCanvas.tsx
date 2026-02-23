@@ -20,7 +20,6 @@ import {
   getIncrementalLayoutOptions,
   getIncrementalOptionsForMode,
 } from '@/lib/layout-configs';
-import { formatNimiq } from '@/lib/format-utils';
 import { ensureLayoutRegistered } from '@/lib/layout-loader';
 import { computeDirectedFlowPositions, computeIncrementalDirectedFlow } from '@/lib/layout-directed-flow';
 import { computeBiFlowPositions } from '@/lib/layout-biflow';
@@ -28,7 +27,7 @@ import { identiconManager } from '@/lib/identicon-manager';
 import { computeGraphHash, saveLayoutPositions, getLayoutPositions } from '@/lib/layout-cache';
 import { registerUiExtensions, attachUiExtensions } from '@/lib/cytoscape-ui-extensions';
 import { CYTOSCAPE_UI_EXTENSION_MODULES } from '@/lib/cytoscape-ui-extension-modules';
-import { getNodeTxCount } from './tooltip-utils';
+import { formatTooltipBalance, getNodeTxCount } from './tooltip-utils';
 
 // Register default layout statically (always needed)
 cytoscape.use(fcose);
@@ -191,7 +190,7 @@ function renderTooltipContent(
   const txCount = getNodeTxCount(nodeData, nodeId, edgesMap);
   return (
     <span className="font-bold uppercase tracking-wide text-nq-periwinkle">
-      {formatNimiq(nodeData.balance)} · {txCount.toLocaleString()} TX
+      {formatTooltipBalance(nodeData.balance)} · {txCount.toLocaleString()} TX
     </span>
   );
 }

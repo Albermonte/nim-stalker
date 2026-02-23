@@ -1,8 +1,17 @@
-import type { CytoscapeEdge } from '@nim-stalker/shared';
+import type { CytoscapeEdge, NodeData } from '@nim-stalker/shared';
 
 export interface ConnectedTxActivity {
   txCount: number;
   totalValue: bigint;
+}
+
+export function formatTooltipBalance(balance: string): string {
+  try {
+    const roundedNim = (BigInt(balance) + 50_000n) / 100_000n;
+    return `${roundedNim.toLocaleString()} NIM`;
+  } catch {
+    return '0 NIM';
+  }
 }
 
 function safeBigInt(value: string | undefined): bigint {
@@ -32,4 +41,16 @@ export function getConnectedTxActivity(
   if (txCount === 0 && totalValue === 0n) return null;
 
   return { txCount, totalValue };
+}
+
+export function getNodeTxCount(
+  nodeData: NodeData,
+  nodeId: string,
+  edgesMap: Map<string, CytoscapeEdge>
+): number {
+  if (typeof nodeData.txCount === 'number' && Number.isFinite(nodeData.txCount)) {
+    return nodeData.txCount;
+  }
+
+  return getConnectedTxActivity(nodeId, edgesMap)?.txCount ?? 0;
 }
