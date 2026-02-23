@@ -399,7 +399,7 @@ export function GraphCanvas() {
 
   // Sync elements with Cytoscape instance when they change
   useEffect(() => {
-    const cy = cyRef.current;
+    const cy = cyInstance;
     if (!cy) return;
 
     // Get current element IDs in Cytoscape (also used for fixedNodeConstraint)
@@ -575,6 +575,20 @@ export function GraphCanvas() {
       const executeLayout = () => {
         // Re-check staleness: a newer effect invocation may have superseded this one
         if (layoutGeneration !== layoutGenerationRef.current) return;
+
+        // Ensure viewport dimensions are ready before the first fit/layout pass.
+        // On initial mount, Cytoscape can briefly report a zero-sized container.
+        const container = cy.container();
+        const width = container?.clientWidth ?? 0;
+        const height = container?.clientHeight ?? 0;
+        if ((width <= 0 || height <= 0) && !executeLayoutRetriedForSize) {
+          executeLayoutRetriedForSize = true;
+          layoutDebounceRef.current = setTimeout(executeLayout, 80);
+          return;
+        }
+
+        // Sync Cytoscape with current container size before running layout/fit.
+        cy.resize();
 
         // Stop any layout that started from a previous debounce cycle
         stopPreviousLayout();
@@ -914,6 +928,7 @@ export function GraphCanvas() {
       // Debounce layout runs — longer for physics-based layouts (Cola)
       // which are expensive, shorter for deterministic layouts.
       const debounceMs = layoutMode === 'cola' ? 300 : 150;
+      let executeLayoutRetriedForSize = false;
       layoutDebounceRef.current = setTimeout(executeLayout, debounceMs);
 
       // Clear the expanded node reference after layout
@@ -1018,7 +1033,7 @@ export function GraphCanvas() {
     }
 
     prevNodeCountRef.current = currentNodeCount;
-  }, [nodes, edges, pathView.active, pathView.from, pathView.to, pathView.pathNodeOrder, pathView.pathEdgeIds, clearLastExpanded, layoutMode]);
+  }, [cyInstance, nodes, edges, pathView.active, pathView.from, pathView.to, pathView.pathNodeOrder, pathView.pathEdgeIds, clearLastExpanded, layoutMode]);
 
   // Highlight edges connected to selected node with direction-based colors
   useEffect(() => {
