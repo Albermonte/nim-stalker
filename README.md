@@ -6,11 +6,15 @@
 
 **Ever wondered where your NIM went? Now you can stalk it.**
 
-Nim Stalker is a transaction graph explorer for Nimiq. Search an address, expand its neighborhood, inspect flows, and follow paths between wallets in a live graph UI.
+A blockchain transaction graph visualizer for Nimiq. Search any address, watch the connections unfold, and discover the hidden web of transactions — all rendered as a beautiful interactive graph.
+
+> *Think of it as Six Degrees of Kevin Bacon, but for crypto wallets.* 🥓
 
 ## What It Does
 
 Nim Stalker ingests Nimiq blockchain transactions, stores both raw and aggregated graph relationships in Neo4j, and serves them through a Bun + Elysia API. The Next.js frontend renders that data as an interactive graph and transaction timeline with path search, filtering, live balance refresh, and export tools.
+
+It's like a map — but instead of roads, you see money flowing.
 
 ## Architecture at a Glance
 
@@ -300,6 +304,21 @@ Labeling and caching:
 - API address cache TTL is 5 minutes.
 - Web API client caches by endpoint TTL (latest graph, address, recent tx, etc.).
 
+## 🎨 Design System
+
+The UI follows a **Peanut.me-inspired** palette with playful, bold aesthetics:
+
+| Color | Hex | Usage |
+|-------|-----|-------|
+| 🌸 Pink | `#FF90E8` | Primary actions, selection highlights, sparkle accents |
+| 💜 Pink Dark | `#E91E8C` | Hover states, emphasis |
+| 💠 Periwinkle | `#8B8BF5` | Path overlays, secondary actions |
+| 🌟 Yellow | `#FFC900` | Root nodes, warnings, sparkle accents |
+| 🍦 Cream | `#FAF4F0` | Backgrounds |
+| 🟣 Purple | `#6340DF` | Accents |
+
+Style hallmarks: `border-2`, `rounded-sm` (2px), offset shadows (`4px 4px`), active press effects on buttons, and sparkle (✦) decorations.
+
 ## Testing and CI
 
 Local commands:
@@ -318,10 +337,14 @@ Current GitHub Actions workflow (`.github/workflows/test.yml`) runs:
 
 ## Custom Node Recommendation
 
-Nim Stalker works best with the slim Albatross node fork:
+This project runs against a **slim Albatross node** — a stripped-down fork of the Nimiq PoS node optimized for indexing and RPC queries.
 
 - [core-rs-albatross-slim](https://github.com/Albermonte/core-rs-albatross-slim)
 
-This node is recommended for predictable indexing throughput and RPC behavior.
+You can still point Nim Stalker at any compatible RPC endpoint using `NIMIQ_RPC_URL`
 
-You can still point Nim Stalker at any compatible RPC endpoint using `NIMIQ_RPC_URL`, but throughput and endpoint behavior depend on the provider you choose.
+---
+
+<p align="center">
+  <em>Built with ✦ pink sparkles and mass surveillance energy ✦</em>
+</p>
