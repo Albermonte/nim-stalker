@@ -3,42 +3,45 @@
 import { useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { useGraphStore } from '@/store/graph-store';
+import { GraphShell } from '@/components/GraphShell';
 import { api } from '@/lib/api';
 import { formatNimiqAddress, truncateAddress } from '@/lib/format-utils';
-import { isAddressSlug, isTxHashSlug, urlSlugToAddress } from '@/lib/url-utils';
-import { GraphShell } from '@/components/GraphShell';
-import { AddressType, type CytoscapeNode, type CytoscapeEdge } from '@nim-stalker/shared';
+import { isTxHash, safeDecodeURIComponent } from '@/lib/url-utils';
+import { useGraphStore } from '@/store/graph-store';
+import { AddressType, type CytoscapeEdge, type CytoscapeNode } from '@nim-stalker/shared';
 
-export default function SlugPage() {
-  const { slug } = useParams<{ slug: string }>();
+export default function TxHashPage() {
+  const { hash } = useParams<{ hash: string }>();
   const router = useRouter();
-  const initializedRef = useRef(false);
+  const lastHashRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (initializedRef.current || !slug) return;
-    initializedRef.current = true;
+    if (!hash) return;
 
-    const decodedSlug = decodeURIComponent(slug);
-
-    if (isAddressSlug(decodedSlug)) {
-      const address = urlSlugToAddress(decodedSlug);
-      const { setSkipInitialLoad, searchAddress } = useGraphStore.getState();
-      setSkipInitialLoad(true);
-      searchAddress(address);
-    } else if (isTxHashSlug(decodedSlug)) {
-      handleTxHash(decodedSlug);
-    } else {
-      toast.error('Invalid address or transaction hash');
+    const decodedHash = safeDecodeURIComponent(hash);
+    if (!decodedHash) {
+      toast.error('Invalid transaction hash');
       router.replace('/');
+      return;
     }
-  }, [slug, router]);
+
+    if (lastHashRef.current === decodedHash) return;
+    lastHashRef.current = decodedHash;
+
+    if (!isTxHash(decodedHash)) {
+      toast.error('Invalid transaction hash');
+      router.replace('/');
+      return;
+    }
+
+    void handleTxHash(decodedHash);
+  }, [hash, router]);
 
   return <GraphShell />;
 }
 
 async function handleTxHash(hash: string) {
-  const { setSkipInitialLoad, setLoading, setError, addGraphData } = useGraphStore.getState();
+  const { setSkipInitialLoad, setLoading, setError, addGraphData, clearGraph } = useGraphStore.getState();
   setSkipInitialLoad(true);
   setLoading(true);
 
@@ -50,6 +53,8 @@ async function handleTxHash(hash: string) {
       setLoading(false);
       return;
     }
+
+    clearGraph();
 
     const fromFormatted = formatNimiqAddress(tx.from);
     const toFormatted = formatNimiqAddress(tx.to);

@@ -1,4 +1,15 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { afterEach, describe, expect, mock, test } from 'bun:test';
+import {
+  ensureLayoutRegistered,
+  resetLayoutLoaderStateForTests,
+  setLayoutLoaderCytoscapeHostForTests,
+} from './layout-loader';
+
+afterEach(() => {
+  resetLayoutLoaderStateForTests();
+  setLayoutLoaderCytoscapeHostForTests(null);
+  mock.restore();
+});
 
 describe('layout-loader', () => {
   test('retries failed registration and supports nested default export shapes', async () => {
@@ -11,10 +22,6 @@ describe('layout-loader', () => {
     });
     const dagrePlugin = () => {};
 
-    mock.module('cytoscape', () => ({
-      default: { use },
-    }));
-
     mock.module('cytoscape-cola', () => {
       return {
         default: () => {},
@@ -26,7 +33,7 @@ describe('layout-loader', () => {
       },
     }));
 
-    const { ensureLayoutRegistered } = await import('./layout-loader');
+    setLayoutLoaderCytoscapeHostForTests({ use });
 
     await expect(ensureLayoutRegistered('cola')).rejects.toThrow('transient registration failure');
     await expect(ensureLayoutRegistered('cola')).resolves.toBeUndefined();

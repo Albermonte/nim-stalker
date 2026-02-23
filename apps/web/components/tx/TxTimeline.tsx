@@ -8,7 +8,7 @@ import type { Direction } from '@nim-stalker/shared';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { formatDate, formatNimiq } from '@/lib/format-utils';
-import { addressToUrlSlug, buildAddressHashUrl } from '@/lib/url-utils';
+import { buildAddressRoute, buildAddressTxRoute, buildTxRoute } from '@/lib/url-utils';
 import { computeTxTimelinePositions } from '@/lib/tx-timeline-layout';
 
 type TxRow = {
@@ -159,7 +159,7 @@ export function TxTimeline(props: { address: string; direction: Direction; limit
       const node = evt.target;
       if (!node?.id) return;
       const hash = node.id();
-      router.push(`/${encodeURIComponent(hash)}`);
+      router.push(buildTxRoute(hash));
     };
 
     cyInstance.on('tap', 'node', handleTap);
@@ -176,13 +176,12 @@ export function TxTimeline(props: { address: string; direction: Direction; limit
   }, [cyInstance, elements]);
 
   const handleBack = () => {
-    window.location.href = buildAddressHashUrl(address);
+    router.push(buildAddressRoute(address));
   };
 
   const handleCopyLink = async () => {
     try {
-      const slug = addressToUrlSlug(address);
-      const url = `${window.location.origin}/tx?addr=${encodeURIComponent(slug)}&direction=${encodeURIComponent(direction)}&limit=${encodeURIComponent(String(limit))}`;
+      const url = `${window.location.origin}${buildAddressTxRoute(address, direction, limit)}`;
       await navigator.clipboard.writeText(url);
       toast.success('Link copied');
     } catch {
@@ -273,4 +272,3 @@ export function TxTimeline(props: { address: string; direction: Direction; limit
     </main>
   );
 }
-

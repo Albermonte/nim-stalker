@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { shouldResetHomeGraphState } from './page';
+import { shouldResetHomeGraphState } from './home-state';
 
 describe('shouldResetHomeGraphState', () => {
   test('returns true when stale graph data exists', () => {

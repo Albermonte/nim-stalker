@@ -23,6 +23,7 @@ export type LayoutMode =
   | 'concentric-volume';
 
 const LIVE_BALANCE_BATCH_SIZE = 100;
+let latestHomeReloadRequestId = 0;
 
 function chunkArray<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
@@ -103,6 +104,7 @@ interface GraphActions {
   exitPathView: () => void;
   clearLastExpanded: () => void;
   loadInitialData: () => Promise<void>;
+  reloadHomeGraph: () => Promise<void>;
   expandAllNodes: () => Promise<void>;
   refreshBalancesForAddresses: (addresses: string[], options?: { force?: boolean }) => Promise<void>;
   /** Set layout mode */
@@ -686,6 +688,79 @@ export const useGraphStore = create<GraphState & GraphActions>()(
         setError(err instanceof Error ? err.message : 'Failed to load initial data');
       } finally {
         setLoading(false);
+      }
+    },
+
+    reloadHomeGraph: async () => {
+      const { setLoading, setError } = get();
+      const requestId = ++latestHomeReloadRequestId;
+      const shouldApplyHomeReload = () =>
+        requestId === latestHomeReloadRequestId &&
+        !get().skipInitialLoad &&
+        !get().pathView.active;
+
+      setLoading(true);
+      setError(null);
+
+      try {
+        const result = await api.getLatestBlocksGraph(10);
+        if (!shouldApplyHomeReload()) {
+          return;
+        }
+        const nextNodes = new Map<string, CytoscapeNode>();
+        const nextEdges = new Map<string, CytoscapeEdge>();
+
+        for (const node of result.nodes) {
+          nextNodes.set(node.data.id, node);
+        }
+        for (const edge of result.edges) {
+          nextEdges.set(edge.data.id, edge);
+        }
+
+        set((state) => {
+          if (
+            requestId !== latestHomeReloadRequestId ||
+            state.skipInitialLoad ||
+            state.pathView.active
+          ) {
+            return;
+          }
+          state.nodes = nextNodes;
+          state.edges = nextEdges;
+          state.selectedNodeId = state.selectedNodeId && nextNodes.has(state.selectedNodeId)
+            ? state.selectedNodeId
+            : null;
+          state.selectedEdgeId = state.selectedEdgeId && nextEdges.has(state.selectedEdgeId)
+            ? state.selectedEdgeId
+            : null;
+          state.skipInitialLoad = false;
+          state.pathMode = {
+            active: false,
+            from: null,
+            to: null,
+            maxHops: state.pathMode.maxHops,
+            directed: state.pathMode.directed,
+          };
+          state.pathView = {
+            active: false,
+            from: null,
+            to: null,
+            pathNodeIds: new Set(),
+            pathNodeOrder: [],
+            pathEdgeIds: new Set(),
+            savedNodes: null,
+            savedEdges: null,
+            stats: null,
+          };
+        });
+      } catch (err) {
+        if (shouldApplyHomeReload()) {
+          setError(err instanceof Error ? err.message : 'Failed to reload home graph');
+        }
+      } finally {
+        if (shouldApplyHomeReload()) {
+          setLoading(false);
+        }
       }
     },
 

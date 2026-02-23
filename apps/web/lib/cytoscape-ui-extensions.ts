@@ -21,6 +21,13 @@ export interface UiExtensionAttachOptions {
   navigatorContainer?: string;
 }
 
+type NavigatorLike = {
+  destroy?: () => void;
+  _removeCyListeners?: () => void;
+  _onRenderHandler?: { cancel?: () => void } | null;
+  overlayTimeout?: ReturnType<typeof setTimeout> | false | null;
+};
+
 let registered = false;
 
 export function createFloatingUiPopperFactory() {
@@ -63,6 +70,15 @@ export function attachUiExtensions(
   options: UiExtensionAttachOptions = {}
 ): () => void {
   const cleanupFns: Array<() => void> = [];
+  const addCleanup = (cleanup: () => void): void => {
+    cleanupFns.push(() => {
+      try {
+        cleanup();
+      } catch {
+        // Route transitions can race with Cytoscape extension teardown.
+      }
+    });
+  };
 
   const navigatorFactory = (cy as any).navigator;
   if (typeof navigatorFactory === 'function') {
@@ -73,10 +89,33 @@ export function attachUiExtensions(
       thumbnailLiveFramerate: false,
       rerenderDelay: 120,
       removeCustomContainer: false,
-    });
+    }) as NavigatorLike;
+
+    if (nav && typeof nav._removeCyListeners === 'function') {
+      addCleanup(() => {
+        nav._removeCyListeners?.();
+      });
+    }
+
+    if (nav && nav._onRenderHandler && typeof nav._onRenderHandler.cancel === 'function') {
+      addCleanup(() => {
+        nav._onRenderHandler?.cancel?.();
+      });
+    }
+
+    if (nav && nav.overlayTimeout != null && nav.overlayTimeout !== false) {
+      addCleanup(() => {
+        if (nav.overlayTimeout != null && nav.overlayTimeout !== false) {
+          clearTimeout(nav.overlayTimeout);
+          nav.overlayTimeout = false;
+        }
+      });
+    }
 
     if (nav && typeof nav.destroy === 'function') {
-      cleanupFns.push(() => nav.destroy());
+      addCleanup(() => {
+        nav.destroy?.();
+      });
     }
   }
 
@@ -93,11 +132,16 @@ export function attachUiExtensions(
     }
 
     if (autopan && typeof autopan.disable === 'function') {
-      cleanupFns.push(() => autopan.disable());
+      addCleanup(() => {
+        autopan.disable();
+      });
     }
   }
 
+  let cleanedUp = false;
   return () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
     for (let i = cleanupFns.length - 1; i >= 0; i -= 1) {
       cleanupFns[i]();
     }

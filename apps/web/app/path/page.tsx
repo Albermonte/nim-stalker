@@ -4,47 +4,46 @@ import { Suspense, useEffect, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useGraphStore } from '@/store/graph-store';
-import { formatNimiqAddress } from '@/lib/format-utils';
-import { isAddressSlug, urlSlugToAddress } from '@/lib/url-utils';
 import { GraphShell } from '@/components/GraphShell';
+import { isPathRequestAlreadyActive, parsePathRequest } from './path-state';
 
 function PathPageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const initializedRef = useRef(false);
+  const lastRequestKeyRef = useRef<string | null>(null);
+  const searchParamsKey = searchParams.toString();
 
   useEffect(() => {
-    if (initializedRef.current) return;
-    initializedRef.current = true;
-
-    const from = searchParams.get('from');
-    const to = searchParams.get('to');
-    const maxHopsParam = searchParams.get('maxHops');
-    const directedParam = searchParams.get('directed');
-
-    if (!from || !to) {
-      toast.error('Missing path parameters: from and to are required');
+    const parsed = parsePathRequest(new URLSearchParams(searchParamsKey));
+    if (!parsed.ok) {
+      if (parsed.reason === 'missing_params') {
+        toast.error('Missing path parameters: from and to are required');
+      } else {
+        toast.error('Invalid address format in path URL');
+      }
       router.replace('/');
       return;
     }
 
-    if (!isAddressSlug(from) || !isAddressSlug(to)) {
-      toast.error('Invalid address format in path URL');
-      router.replace('/');
+    const request = parsed.value;
+    const state = useGraphStore.getState();
+
+    if (isPathRequestAlreadyActive(state.pathView, request)) {
+      lastRequestKeyRef.current = request.requestKey;
       return;
     }
 
-    const fromAddress = formatNimiqAddress(urlSlugToAddress(from));
-    const toAddress = formatNimiqAddress(urlSlugToAddress(to));
-    const maxHops = maxHopsParam ? Number(maxHopsParam) : 3;
-    const directed = directedParam === 'true';
+    if (lastRequestKeyRef.current === request.requestKey) {
+      return;
+    }
+    lastRequestKeyRef.current = request.requestKey;
 
-    const { setSkipInitialLoad, setPathModeMaxHops, setPathModeDirected, findPath } = useGraphStore.getState();
+    const { setSkipInitialLoad, setPathModeMaxHops, setPathModeDirected, findPath } = state;
     setSkipInitialLoad(true);
-    setPathModeMaxHops(maxHops);
-    setPathModeDirected(directed);
-    findPath(fromAddress, toAddress, maxHops);
-  }, [searchParams, router]);
+    setPathModeMaxHops(request.maxHops);
+    setPathModeDirected(request.directed);
+    void findPath(request.fromAddress, request.toAddress, request.maxHops);
+  }, [router, searchParamsKey]);
 
   return <GraphShell />;
 }

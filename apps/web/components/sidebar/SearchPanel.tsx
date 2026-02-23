@@ -1,14 +1,16 @@
 'use client';
 
 import { useState, useCallback, memo } from 'react';
+import { useRouter } from 'next/navigation';
 import { useGraphStore } from '@/store/graph-store';
-import { buildAddressHashUrl } from '@/lib/url-utils';
+import { buildAddressRoute } from '@/lib/url-utils';
 import { resolveAddressInput } from '@/lib/address-label-index';
 import { AddressAutocompleteInput } from '@/components/ui/AddressAutocompleteInput';
 
 type ExportFormat = 'json' | 'csv';
 
 function SearchPanelInner() {
+  const router = useRouter();
   const [searchAddressInput, setSearchAddressInput] = useState('');
   const [addAddressInput, setAddAddressInput] = useState('');
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -73,7 +75,7 @@ function SearchPanelInner() {
     try {
       await searchAddress(address);
       setSearchAddressInput('');
-      window.history.pushState(null, '', buildAddressHashUrl(address));
+      router.push(buildAddressRoute(address));
     } catch (err) {
       setSearchError(err instanceof Error ? err.message : 'Search failed');
     }

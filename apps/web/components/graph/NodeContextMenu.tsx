@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, RefObject } from 'react';
+import { useRouter } from 'next/navigation';
 import type { Core } from 'cytoscape';
 import { useGraphStore } from '@/store/graph-store';
-import { addressToUrlSlug, buildAddressHashUrl } from '@/lib/url-utils';
+import { buildAddressRoute, buildAddressTxRoute } from '@/lib/url-utils';
 
 interface ContextMenuState {
   visible: boolean;
@@ -18,6 +19,7 @@ interface NodeContextMenuProps {
 }
 
 export function NodeContextMenu({ cyRef, containerRef }: NodeContextMenuProps) {
+  const router = useRouter();
   const [menu, setMenu] = useState<ContextMenuState>({
     visible: false,
     x: 0,
@@ -118,16 +120,15 @@ export function NodeContextMenu({ cyRef, containerRef }: NodeContextMenuProps) {
 
   const handleOpen = () => {
     if (menu.nodeId) {
-      searchAddress(menu.nodeId);
-      window.history.pushState(null, '', buildAddressHashUrl(menu.nodeId));
+      void searchAddress(menu.nodeId);
+      router.push(buildAddressRoute(menu.nodeId));
     }
     hideMenu();
   };
 
   const handleTxTimeline = () => {
     if (menu.nodeId) {
-      const slug = addressToUrlSlug(menu.nodeId);
-      window.location.href = `/tx?addr=${encodeURIComponent(slug)}&direction=both&limit=200`;
+      router.push(buildAddressTxRoute(menu.nodeId, 'both', 200));
     }
     hideMenu();
   };

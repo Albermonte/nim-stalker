@@ -1,4 +1,5 @@
 import { ValidationUtils } from '@nimiq/utils';
+import type { Direction } from '@nim-stalker/shared';
 
 /**
  * Check if a URL slug is a valid Nimiq address (spaceless format)
@@ -11,8 +12,20 @@ export function isAddressSlug(slug: string): boolean {
 /**
  * Check if a URL slug is a transaction hash (64 hex characters)
  */
-export function isTxHashSlug(slug: string): boolean {
+export function isTxHash(slug: string): boolean {
   return /^[a-fA-F0-9]{64}$/.test(slug);
+}
+
+/**
+ * Safe decode helper for route and query params.
+ * Returns null for malformed percent-encoded values.
+ */
+export function safeDecodeURIComponent(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -23,24 +36,32 @@ export function addressToUrlSlug(address: string): string {
 }
 
 /**
- * Build a hash-based address URL (keeps app on home route)
+ * Build canonical address route
  */
-export function buildAddressHashUrl(address: string): string {
-  return `/#${addressToUrlSlug(address)}`;
+export function buildAddressRoute(address: string): string {
+  return `/address/${addressToUrlSlug(address)}`;
 }
 
 /**
- * Extract and normalize address slug from location hash
+ * Build canonical address timeline route
  */
-export function getAddressSlugFromHash(hash: string): string | null {
-  if (!hash) return null;
-  const raw = hash.startsWith('#') ? hash.slice(1) : hash;
-  if (!raw) return null;
-  try {
-    return addressToUrlSlug(decodeURIComponent(raw));
-  } catch {
-    return null;
-  }
+export function buildAddressTxRoute(
+  address: string,
+  direction: Direction = 'both',
+  limit: number = 200
+): string {
+  const params = new URLSearchParams({
+    direction,
+    limit: String(limit),
+  });
+  return `${buildAddressRoute(address)}/tx?${params.toString()}`;
+}
+
+/**
+ * Build canonical single transaction route
+ */
+export function buildTxRoute(hash: string): string {
+  return `/tx/${encodeURIComponent(hash)}`;
 }
 
 /**

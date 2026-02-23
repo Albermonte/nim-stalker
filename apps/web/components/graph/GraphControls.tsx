@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useGraphStore, type LayoutMode } from '@/store/graph-store';
 import { LAYOUT_CATEGORIES, findLayoutCategory, getLayoutLabel } from '@/lib/layout-configs';
 import { buildPathUrl } from '@/lib/url-utils';
@@ -14,6 +15,7 @@ function getPathModeStatusText(from: string | null, to: string | null): string {
 }
 
 export function GraphControls() {
+  const router = useRouter();
   const { clearGraph, loading, pathMode, setPathMode, setPathModeMaxHops, setPathModeDirected, pathView, exitPathView, layoutMode, setLayoutMode, expandAllNodes, nodes } = useGraphStore();
   const [showHelp, setShowHelp] = useState(false);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(() => {
@@ -44,9 +46,9 @@ export function GraphControls() {
   // Sync URL when entering/exiting path view
   useEffect(() => {
     if (pathView.active && pathView.stats && pathView.from && pathView.to) {
-      window.history.replaceState(null, '', buildPathUrl(pathView.from, pathView.to, pathView.stats.maxHops, pathView.stats.directed));
+      router.replace(buildPathUrl(pathView.from, pathView.to, pathView.stats.maxHops, pathView.stats.directed));
     }
-  }, [pathView.active, pathView.stats, pathView.from, pathView.to]);
+  }, [pathView.active, pathView.stats, pathView.from, pathView.to, router]);
 
   const layoutSelector = (
     <div className="nq-card py-2 px-3 text-xs w-48" ref={layoutPanelRef}>
@@ -117,7 +119,7 @@ export function GraphControls() {
             )}
           </div>
           <button
-            onClick={() => { exitPathView(); window.history.replaceState(null, '', '/'); }}
+            onClick={() => { exitPathView(); router.replace('/'); }}
             className="nq-btn-pink w-full mt-3 text-xs py-1"
           >
             Exit Path View

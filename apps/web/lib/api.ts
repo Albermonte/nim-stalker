@@ -32,6 +32,7 @@ const ENDPOINT_TTL: Record<string, number> = {
   '/graph/': 60_000,      // Graph data: 60s
   '/graph/latest': 5_000, // Latest blocks: 5s
   '/address/': 30_000,    // Address data: 30s (default)
+  '/transactions/': 10_000, // Recent tx feed: 10s
 };
 const MAX_CACHE_ENTRIES = 2_000;
 const CACHE_SWEEP_EVERY_WRITES = 50;
@@ -241,6 +242,35 @@ export class ApiClient {
       pageSize: number;
       hasMore: boolean;
     }>(`/address/${encodeURIComponent(normalizedAddress)}/transactions${query ? `?${query}` : ''}`);
+  }
+
+  async getRecentTransactions(
+    options?: {
+      page?: number;
+      pageSize?: number;
+    }
+  ) {
+    const params = buildParams({
+      page: options?.page,
+      pageSize: options?.pageSize,
+    });
+    const query = params.toString();
+    return this.fetch<{
+      data: Array<{
+        hash: string;
+        from: string;
+        to: string;
+        value: string;
+        fee: string;
+        blockNumber: number;
+        timestamp: string;
+        data?: string;
+      }>;
+      total: number;
+      page: number;
+      pageSize: number;
+      hasMore: boolean;
+    }>(`/transactions/recent${query ? `?${query}` : ''}`);
   }
 
   async expandGraph(

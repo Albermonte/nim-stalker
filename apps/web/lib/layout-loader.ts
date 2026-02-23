@@ -8,6 +8,9 @@ import cytoscape from 'cytoscape';
 
 const registered = new Set<string>(['fcose', 'preset']);
 const loading = new Map<string, Promise<void>>();
+type CytoscapeUseHost = { use: (extension: unknown) => void };
+const defaultCytoscapeHost = cytoscape as unknown as CytoscapeUseHost;
+let cytoscapeHost: CytoscapeUseHost = defaultCytoscapeHost;
 
 /** Map layout mode IDs to the Cytoscape extension name they require */
 function getExtensionName(mode: string): string {
@@ -29,17 +32,17 @@ async function loadExtension(name: string): Promise<void> {
   switch (name) {
     case 'cola': {
       const mod = await import('cytoscape-cola');
-      cytoscape.use(resolveExtension(mod));
+      cytoscapeHost.use(resolveExtension(mod));
       break;
     }
     case 'elk': {
       const mod = await import('cytoscape-elk');
-      cytoscape.use(resolveExtension(mod));
+      cytoscapeHost.use(resolveExtension(mod));
       break;
     }
     case 'dagre': {
       const mod = await import('cytoscape-dagre');
-      cytoscape.use(resolveExtension(mod));
+      cytoscapeHost.use(resolveExtension(mod));
       break;
     }
   }
@@ -69,4 +72,18 @@ export async function ensureLayoutRegistered(mode: string): Promise<void> {
 
   loading.set(extName, promise);
   return promise;
+}
+
+export function setLayoutLoaderCytoscapeHostForTests(host: CytoscapeUseHost | null): void {
+  if (process.env.NODE_ENV !== 'test') return;
+  cytoscapeHost = host ?? defaultCytoscapeHost;
+}
+
+export function resetLayoutLoaderStateForTests(): void {
+  if (process.env.NODE_ENV !== 'test') return;
+  registered.clear();
+  registered.add('fcose');
+  registered.add('preset');
+  loading.clear();
+  cytoscapeHost = defaultCytoscapeHost;
 }

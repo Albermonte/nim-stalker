@@ -29,14 +29,23 @@ describe('cytoscape-ui-extensions', () => {
 
   test('attachUiExtensions wires navigator and autopan without drag-blocking no-overlap', () => {
     const destroyNavigator = mock(() => {});
+    const removeCyListeners = mock(() => {});
+    const cancelRender = mock(() => {});
     const noOverlap = mock(() => {});
     const on = mock(() => {});
     const off = mock(() => {});
+    const disableAutopan = mock(() => {});
 
     const nodes = { length: 3, noOverlap } as any;
+    const nav = {
+      _removeCyListeners: removeCyListeners,
+      _onRenderHandler: { cancel: cancelRender },
+      overlayTimeout: setTimeout(() => {}, 5_000),
+      destroy: destroyNavigator,
+    };
     const cy = {
-      navigator: mock(() => ({ destroy: destroyNavigator })),
-      autopanOnDrag: mock(() => ({ enable: mock(() => {}) })),
+      navigator: mock(() => nav),
+      autopanOnDrag: mock(() => ({ enable: mock(() => {}), disable: disableAutopan })),
       nodes: mock(() => nodes),
       on,
       off,
@@ -50,14 +59,46 @@ describe('cytoscape-ui-extensions', () => {
     expect(on).not.toHaveBeenCalled();
 
     cleanup();
+    cleanup();
 
     expect(destroyNavigator).toHaveBeenCalledTimes(1);
+    expect(removeCyListeners).toHaveBeenCalledTimes(1);
+    expect(cancelRender).toHaveBeenCalledTimes(1);
+    expect(disableAutopan).toHaveBeenCalledTimes(1);
+    expect(nav.overlayTimeout).toBe(false);
     expect(off).not.toHaveBeenCalled();
   });
 
   test('attachUiExtensions is safe when extension methods are unavailable', () => {
     const cleanup = attachUiExtensions({} as any);
     expect(typeof cleanup).toBe('function');
+    expect(() => cleanup()).not.toThrow();
+  });
+
+  test('cleanup swallows navigator teardown failures', () => {
+    const cy = {
+      navigator: mock(() => ({
+        _removeCyListeners: mock(() => {
+          throw new Error('remove failed');
+        }),
+        _onRenderHandler: {
+          cancel: mock(() => {
+            throw new Error('cancel failed');
+          }),
+        },
+        destroy: mock(() => {
+          throw new Error('destroy failed');
+        }),
+      })),
+      autopanOnDrag: mock(() => ({
+        enable: mock(() => {}),
+        disable: mock(() => {
+          throw new Error('disable failed');
+        }),
+      })),
+    } as any;
+
+    const cleanup = attachUiExtensions(cy);
     expect(() => cleanup()).not.toThrow();
   });
 });

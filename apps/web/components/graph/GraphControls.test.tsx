@@ -56,9 +56,21 @@ function createStoreState() {
 }
 
 let mockStore = createStoreState();
+const replaceMock = mock(() => {});
 
 mock.module('@/store/graph-store', () => ({
   useGraphStore: () => mockStore,
+}));
+
+mock.module('next/navigation', () => ({
+  useRouter: () => ({
+    push: mock(() => {}),
+    replace: replaceMock,
+    refresh: mock(() => {}),
+    back: mock(() => {}),
+    forward: mock(() => {}),
+    prefetch: mock(() => Promise.resolve()),
+  }),
 }));
 
 import { GraphControls } from './GraphControls';
@@ -66,6 +78,7 @@ import { GraphControls } from './GraphControls';
 describe('GraphControls', () => {
   beforeEach(() => {
     mockStore = createStoreState();
+    replaceMock.mockClear();
   });
 
   test('renders layout selector in path view', () => {
@@ -76,30 +89,14 @@ describe('GraphControls', () => {
     expect(html).toContain('Exit Path View');
   });
 
-  test('syncs URL using canonical path endpoints', async () => {
+  test('syncs URL using canonical path endpoints through Next router', async () => {
     mockStore.pathView.pathNodeOrder = ['A', 'B', 'D', 'C'];
     mockStore.pathView.from = 'A';
     mockStore.pathView.to = 'D';
 
-    const replaceStateSpy = mock(() => {});
-    const originalReplaceState = window.history.replaceState;
-    Object.defineProperty(window.history, 'replaceState', {
-      configurable: true,
-      writable: true,
-      value: replaceStateSpy,
-    });
+    render(<GraphControls />);
 
-    try {
-      render(<GraphControls />);
-
-      await waitFor(() => expect(replaceStateSpy).toHaveBeenCalledTimes(1));
-      expect(replaceStateSpy.mock.calls[0]?.[2]).toBe('/path?from=A&to=D&maxHops=3&directed=false');
-    } finally {
-      Object.defineProperty(window.history, 'replaceState', {
-        configurable: true,
-        writable: true,
-        value: originalReplaceState,
-      });
-    }
+    await waitFor(() => expect(replaceMock).toHaveBeenCalledTimes(1));
+    expect(replaceMock.mock.calls[0]?.[0]).toBe('/path?from=A&to=D&maxHops=3&directed=false');
   });
 });

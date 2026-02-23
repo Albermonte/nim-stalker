@@ -95,6 +95,8 @@ describe('graph-store', () => {
         savedEdges: null,
         stats: null,
       },
+      layoutMode: 'fcose',
+      skipInitialLoad: false,
     });
 
     // Reset mocks
@@ -531,6 +533,67 @@ describe('graph-store', () => {
       await loadInitialData();
 
       expect(mockApi.getLatestBlocksGraph).not.toHaveBeenCalled();
+    });
+
+    test('reloadHomeGraph does not apply when skipInitialLoad becomes true', async () => {
+      let resolveGraph: ((value: { nodes: CytoscapeNode[]; edges: CytoscapeEdge[] }) => void) | null = null;
+      mockApi.getLatestBlocksGraph.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveGraph = resolve;
+          })
+      );
+
+      const { reloadHomeGraph, setSkipInitialLoad } = useGraphStore.getState();
+      const pending = reloadHomeGraph();
+
+      setSkipInitialLoad(true);
+      resolveGraph?.({
+        nodes: [{ data: { id: 'SHOULD_NOT_APPLY', type: 'BASIC', balance: '1' } }],
+        edges: [],
+      });
+      await pending;
+
+      const state = useGraphStore.getState();
+      expect(state.nodes.has('SHOULD_NOT_APPLY')).toBe(false);
+    });
+
+    test('reloadHomeGraph applies only latest in-flight result', async () => {
+      let resolveFirst: ((value: { nodes: CytoscapeNode[]; edges: CytoscapeEdge[] }) => void) | null = null;
+      let resolveSecond: ((value: { nodes: CytoscapeNode[]; edges: CytoscapeEdge[] }) => void) | null = null;
+
+      mockApi.getLatestBlocksGraph.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          })
+      );
+      mockApi.getLatestBlocksGraph.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecond = resolve;
+          })
+      );
+
+      const { reloadHomeGraph } = useGraphStore.getState();
+      const first = reloadHomeGraph();
+      const second = reloadHomeGraph();
+
+      resolveFirst?.({
+        nodes: [{ data: { id: 'FIRST_RESULT', type: 'BASIC', balance: '1' } }],
+        edges: [],
+      });
+      resolveSecond?.({
+        nodes: [{ data: { id: 'SECOND_RESULT', type: 'BASIC', balance: '2' } }],
+        edges: [],
+      });
+
+      await first;
+      await second;
+
+      const state = useGraphStore.getState();
+      expect(state.nodes.has('FIRST_RESULT')).toBe(false);
+      expect(state.nodes.has('SECOND_RESULT')).toBe(true);
     });
 
     test('refreshBalancesForAddresses updates node balances', async () => {
