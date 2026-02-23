@@ -4,7 +4,32 @@
  */
 
 import { beforeEach, afterEach } from 'bun:test';
+import { Window } from 'happy-dom';
 import '@testing-library/jest-dom';
+
+if (!globalThis.window || !globalThis.document) {
+  const window = new Window();
+
+  Object.assign(globalThis, {
+    window,
+    document: window.document,
+    navigator: window.navigator,
+    Node: window.Node,
+    NodeFilter: window.NodeFilter,
+    Element: window.Element,
+    HTMLElement: window.HTMLElement,
+    HTMLInputElement: window.HTMLInputElement,
+    DocumentFragment: window.DocumentFragment,
+    Event: window.Event,
+    MouseEvent: window.MouseEvent,
+    KeyboardEvent: window.KeyboardEvent,
+    DOMRect: window.DOMRect,
+    MutationObserver: window.MutationObserver,
+    getComputedStyle: window.getComputedStyle.bind(window),
+    requestAnimationFrame: window.requestAnimationFrame.bind(window),
+    cancelAnimationFrame: window.cancelAnimationFrame.bind(window),
+  });
+}
 
 // Set test environment
 process.env.NODE_ENV = 'test';

@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { getAddressLabelService, _resetAddressLabelService } from './address-labels';
-import { ADDRESS_BOOK } from '../data/address-book';
+import { ADDRESS_BOOK } from '@nim-stalker/shared/address-book';
 
 // Get first address book entry for testing
 const addressBookEntries = Object.entries(ADDRESS_BOOK);
@@ -39,6 +39,12 @@ describe('AddressLabelService', () => {
     const service = getAddressLabelService();
     const label = service.getLabel(testBookAddress);
     expect(label).toBe(testBookLabel);
+  });
+
+  test('getLabel resolves known shared address-book entry', () => {
+    const service = getAddressLabelService();
+    const label = service.getLabel('NQ20 8P9L 3YMD GQYT 1TAA 8D0G MC12 5HBQ 1Q8A');
+    expect(label).toBe('Nimiq Sunset Cyberspace');
   });
 
   test('getLabel returns null for unknown address', () => {

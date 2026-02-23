@@ -1,4 +1,4 @@
-import { ADDRESS_BOOK } from '../data/address-book';
+import { ADDRESS_BOOK } from '@nim-stalker/shared/address-book';
 import { formatAddress } from './address-utils';
 
 const VALIDATORS_API_URL = 'https://validators-api-mainnet.pages.dev/api/v1/validators';

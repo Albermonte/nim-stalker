@@ -1,48 +1,12 @@
 'use client';
 
 import { useState, useCallback, memo } from 'react';
-import { ValidationUtils } from '@nimiq/utils';
 import { useGraphStore } from '@/store/graph-store';
 import { buildAddressHashUrl } from '@/lib/url-utils';
+import { resolveAddressInput } from '@/lib/address-label-index';
+import { AddressAutocompleteInput } from '@/components/ui/AddressAutocompleteInput';
 
 type ExportFormat = 'json' | 'csv';
-
-/**
- * Validate and clean a Nimiq address input
- * Returns cleaned address or null with error set
- */
-function validateAndCleanAddress(
-  input: string,
-  setError: (error: string | null) => void
-): string | null {
-  const cleaned = input.replace(/\s/g, '').toUpperCase();
-
-  if (!cleaned) {
-    setError('Please enter an address');
-    return null;
-  }
-
-  if (!ValidationUtils.isValidAddress(cleaned)) {
-    setError('Invalid Nimiq address format');
-    return null;
-  }
-
-  return cleaned;
-}
-
-/**
- * Create an Enter key handler that calls the action when not loading
- */
-function createKeyDownHandler(
-  action: () => void,
-  loading: boolean
-): (e: React.KeyboardEvent) => void {
-  return (e) => {
-    if (e.key === 'Enter' && !loading) {
-      action();
-    }
-  };
-}
 
 function SearchPanelInner() {
   const [searchAddressInput, setSearchAddressInput] = useState('');
@@ -100,13 +64,16 @@ function SearchPanelInner() {
 
   const handleSearch = async () => {
     setSearchError(null);
-    const cleanAddress = validateAndCleanAddress(searchAddressInput, setSearchError);
-    if (!cleanAddress) return;
+    const { address, error } = resolveAddressInput(searchAddressInput);
+    if (!address) {
+      setSearchError(error);
+      return;
+    }
 
     try {
-      await searchAddress(cleanAddress);
+      await searchAddress(address);
       setSearchAddressInput('');
-      window.history.pushState(null, '', buildAddressHashUrl(cleanAddress));
+      window.history.pushState(null, '', buildAddressHashUrl(address));
     } catch (err) {
       setSearchError(err instanceof Error ? err.message : 'Search failed');
     }
@@ -114,19 +81,19 @@ function SearchPanelInner() {
 
   const handleAddNode = async () => {
     setAddError(null);
-    const cleanAddress = validateAndCleanAddress(addAddressInput, setAddError);
-    if (!cleanAddress) return;
+    const { address, error } = resolveAddressInput(addAddressInput);
+    if (!address) {
+      setAddError(error);
+      return;
+    }
 
     try {
-      await addAddress(cleanAddress);
+      await addAddress(address);
       setAddAddressInput('');
     } catch (err) {
       setAddError(err instanceof Error ? err.message : 'Failed to add node');
     }
   };
-
-  const handleSearchKeyDown = createKeyDownHandler(handleSearch, loading);
-  const handleAddKeyDown = createKeyDownHandler(handleAddNode, loading);
 
   return (
     <div className="p-4 border-b-3 border-nq-black">
@@ -137,13 +104,14 @@ function SearchPanelInner() {
         </h2>
 
         <div className="space-y-3">
-          <input
-            type="text"
+          <AddressAutocompleteInput
             value={searchAddressInput}
-            onChange={(e) => setSearchAddressInput(e.target.value)}
-            onKeyDown={handleSearchKeyDown}
-            placeholder="NQ42 XXXX XXXX ..."
-            className="nq-input text-sm font-mono"
+            onChange={setSearchAddressInput}
+            onEnter={() => {
+              if (!loading) void handleSearch();
+            }}
+            placeholder="NQ42 XXXX XXXX ... or address-book label"
+            ariaLabel="Search address or label"
             disabled={loading}
           />
 
@@ -172,13 +140,14 @@ function SearchPanelInner() {
         </h2>
 
         <div className="space-y-3">
-          <input
-            type="text"
+          <AddressAutocompleteInput
             value={addAddressInput}
-            onChange={(e) => setAddAddressInput(e.target.value)}
-            onKeyDown={handleAddKeyDown}
-            placeholder="NQ42 XXXX XXXX ..."
-            className="nq-input text-sm font-mono"
+            onChange={setAddAddressInput}
+            onEnter={() => {
+              if (!loading) void handleAddNode();
+            }}
+            placeholder="NQ42 XXXX XXXX ... or address-book label"
+            ariaLabel="Add node address or label"
             disabled={loading}
           />
 
