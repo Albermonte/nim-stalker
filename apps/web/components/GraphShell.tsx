@@ -38,7 +38,7 @@ export function GraphShell() {
       <aside className="sidebar w-80 flex flex-col">
         {/* Header */}
         <div className="p-4 border-b-3 border-nq-black bg-nq-pink text-nq-white">
-          <h1 className="text-2xl font-bold tracking-tight">
+          <h1 className="text-3xl font-extrabold tracking-normal">
             <Link
               href="/"
               onClick={(event) => {
@@ -54,7 +54,7 @@ export function GraphShell() {
               <span className="text-nq-yellow">✦</span>
             </Link>
           </h1>
-          <p className="text-sm uppercase tracking-wider opacity-90">Making Blockchain Gossip Visual ✨</p>
+          <p className="text-sm uppercase tracking-wide font-bold">Making Blockchain Gossip Visual ✨</p>
         </div>
 
         <div className="flex-1 overflow-y-auto bg-nq-cream">

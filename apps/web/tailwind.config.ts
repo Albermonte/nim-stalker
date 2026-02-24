@@ -31,16 +31,14 @@ const config: Config = {
       },
       fontFamily: {
         display: [
-          'Impact',
-          'Haettenschweiler',
-          'Franklin Gothic Bold',
-          'Charcoal',
-          'Helvetica Inserat',
-          'Bitstream Vera Sans Bold',
-          'Arial Black',
+          'Roboto Flex',
+          'Arial',
           'sans-serif',
         ],
         mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+      },
+      fontWeight: {
+        bold: '900',
       },
       borderWidth: {
         '3': '3px',

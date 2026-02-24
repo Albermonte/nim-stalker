@@ -130,7 +130,7 @@ function SearchPanelInner() {
           )}
         </div>
 
-        <p className="mt-3 text-xs uppercase tracking-wide opacity-80">
+        <p className="mt-3 text-xs uppercase tracking-wide font-semibold">
           Expands graph connections for the entered address.
         </p>
       </div>
@@ -166,7 +166,7 @@ function SearchPanelInner() {
           )}
         </div>
 
-        <p className="mt-3 text-xs uppercase tracking-wide opacity-80">
+        <p className="mt-3 text-xs uppercase tracking-wide font-semibold">
           Adds a node without expanding. Use with Find Path.
         </p>
       </div>

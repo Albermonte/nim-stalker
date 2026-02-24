@@ -95,7 +95,7 @@ export function RecentTransactionsPanel() {
         )}
 
         {!loading && !error && txs.length === 0 && (
-          <p className="text-xs uppercase tracking-wide opacity-70">
+          <p className="text-xs uppercase tracking-wide opacity-70 font-semibold">
             No recent transactions available.
           </p>
         )}
@@ -108,12 +108,12 @@ export function RecentTransactionsPanel() {
                 href={buildTxRoute(tx.hash)}
                 className="block rounded-md border-2 border-nq-black bg-nq-white px-2 py-2 text-xs hover:bg-nq-pink hover:text-nq-white transition-colors"
               >
-                <div className="font-bold uppercase tracking-wide break-all">{tx.hash.slice(0, 14)}...</div>
-                <div className="mt-1 font-mono">{formatNimiq(tx.value)}</div>
-                <div className="mt-1 opacity-80">
+                <div className="font-extrabold uppercase tracking-wide break-all">{tx.hash.slice(0, 14)}...</div>
+                <div className="mt-1 font-mono font-semibold">{formatNimiq(tx.value)}</div>
+                <div className="mt-1 font-medium">
                   {truncateAddress(tx.from)} → {truncateAddress(tx.to)}
                 </div>
-                <div className="mt-1 opacity-70">
+                <div className="mt-1 font-medium">
                   {formatDate(tx.timestamp)} · block {tx.blockNumber.toLocaleString()}
                 </div>
               </Link>
