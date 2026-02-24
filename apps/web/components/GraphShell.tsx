@@ -54,7 +54,7 @@ export function GraphShell() {
               <span className="text-nq-yellow">✦</span>
             </Link>
           </h1>
-          <p className="text-sm uppercase tracking-wide font-bold">Making Blockchain Gossip Visual ✨</p>
+          <p className="text-sm uppercase font-bold text-balance">Making Blockchain Gossip Visual ✨</p>
         </div>
 
         <div className="flex-1 overflow-y-auto bg-nq-cream">
