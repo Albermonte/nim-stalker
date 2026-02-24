@@ -29,6 +29,7 @@ interface CacheEntry<T> {
 
 /** Per-endpoint TTL configuration */
 const ENDPOINT_TTL: Record<string, number> = {
+  '/graph/everything': 120_000, // Everything queries: 2min (expensive)
   '/graph/': 60_000,      // Graph data: 60s
   '/graph/latest': 5_000, // Latest blocks: 5s
   '/address/': 30_000,    // Address data: 30s (default)
@@ -341,6 +342,28 @@ export class ApiClient {
 
   async getLatestBlocksGraph(count: number = 10): Promise<GraphResponse> {
     return this.fetch<GraphResponse>(`/graph/latest-blocks?count=${count}`);
+  }
+
+  async getEverythingCount(): Promise<{ nodeCount: number; edgeCount: number }> {
+    const cacheKey = 'GET:/graph/everything/count';
+    const cached = this.getCached<{ nodeCount: number; edgeCount: number }>(cacheKey);
+    if (cached) return cached;
+
+    const result = await this.fetch<{ nodeCount: number; edgeCount: number }>('/graph/everything/count');
+    this.setCache(cacheKey, result);
+    return result;
+  }
+
+  async getEverythingNodes(skip: number, limit: number): Promise<{ nodes: GraphResponse['nodes'] }> {
+    return this.fetch<{ nodes: GraphResponse['nodes'] }>(
+      `/graph/everything/nodes?${buildParams({ skip, limit }).toString()}`
+    );
+  }
+
+  async getEverythingEdges(skip: number, limit: number): Promise<{ edges: GraphResponse['edges'] }> {
+    return this.fetch<{ edges: GraphResponse['edges'] }>(
+      `/graph/everything/edges?${buildParams({ skip, limit }).toString()}`
+    );
   }
 }
 

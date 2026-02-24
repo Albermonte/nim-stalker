@@ -18,12 +18,21 @@ export function GraphControls() {
   const router = useRouter();
   const { clearGraph, loading, pathMode, setPathMode, setPathModeMaxHops, setPathModeDirected, pathView, exitPathView, layoutMode, setLayoutMode, expandAllNodes, nodes } = useGraphStore();
   const [showHelp, setShowHelp] = useState(false);
+  const [showEnchiladaConfirm, setShowEnchiladaConfirm] = useState(false);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(() => {
     return findLayoutCategory(layoutMode)?.id ?? null;
   });
   const helpPanelRef = useRef<HTMLDivElement>(null);
   const helpButtonRef = useRef<HTMLButtonElement>(null);
   const layoutPanelRef = useRef<HTMLDivElement>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup long-press timer on unmount
+  useEffect(() => {
+    return () => {
+      if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    };
+  }, []);
 
   // Close help panel when clicking outside
   useEffect(() => {
@@ -134,6 +143,16 @@ export function GraphControls() {
         <>
           <button
             onClick={() => expandAllNodes()}
+            onMouseDown={() => {
+              longPressTimerRef.current = setTimeout(() => setShowEnchiladaConfirm(true), 5000);
+            }}
+            onMouseUp={() => { if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); }}
+            onMouseLeave={() => { if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); }}
+            onTouchStart={() => {
+              longPressTimerRef.current = setTimeout(() => setShowEnchiladaConfirm(true), 5000);
+            }}
+            onTouchEnd={() => { if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); }}
+            onTouchCancel={() => { if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); }}
             className="nq-btn-periwinkle text-sm"
             disabled={loading || nodes.size === 0}
             title="Expand all visible nodes"
@@ -207,6 +226,37 @@ export function GraphControls() {
       >
         ?
       </button>
+
+      {/* Enchilada Confirmation Dialog */}
+      {showEnchiladaConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="nq-card max-w-sm mx-4">
+            <h3 className="text-nq-pink uppercase tracking-wider font-bold text-lg mb-3">
+              The Whole Enchilada
+            </h3>
+            <p className="text-sm mb-6">
+              Load the entire graph from Neo4j? This may take a while for large databases.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowEnchiladaConfirm(false);
+                  router.push('/the-whole-enchilada');
+                }}
+                className="nq-btn-pink flex-1 text-sm"
+              >
+                Let&apos;s Go
+              </button>
+              <button
+                onClick={() => setShowEnchiladaConfirm(false)}
+                className="nq-btn-white flex-1 text-sm"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Help Panel */}
       {showHelp && (

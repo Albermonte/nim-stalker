@@ -2,6 +2,7 @@ import { Elysia, t } from 'elysia';
 import { getGraphService } from '../services/graph';
 import { getPathFinder } from '../services/path-finder';
 import { getSubgraphFinder } from '../services/subgraph-finder';
+import { getEverythingService } from '../services/everything';
 import { getNimiqService } from '../services/nimiq-rpc';
 import { isValidNimiqAddress, formatAddress, truncateAddress } from '../lib/address-utils';
 import { getAddressLabelService } from '../lib/address-labels';
@@ -339,6 +340,93 @@ export const graphRoutes = new Elysia({ prefix: '/graph' })
     {
       query: t.Object({
         count: t.Optional(t.Number({ minimum: 1, maximum: 50 })),
+      }),
+    }
+  )
+  // GET /graph/everything/count - Get total node and edge counts
+  .get(
+    '/everything/count',
+    async ({ set, request }) => {
+      const policyError = enforceSensitiveEndpointPolicy(request, set, 'graph-everything-count');
+      if (policyError) {
+        return policyError;
+      }
+
+      try {
+        const service = getEverythingService();
+        return await service.getCounts();
+      } catch (error) {
+        console.error('[GET /graph/everything/count] Failed to get counts:', {
+          error: error instanceof Error ? error.message : error,
+        });
+        set.status = 500;
+        return { error: 'Failed to get counts' };
+      }
+    }
+  )
+  // GET /graph/everything/nodes - Get paginated batch of all nodes
+  .get(
+    '/everything/nodes',
+    async ({ query, set, request }) => {
+      const policyError = enforceSensitiveEndpointPolicy(request, set, 'graph-everything-nodes');
+      if (policyError) {
+        return policyError;
+      }
+
+      const skip = query.skip ?? 0;
+      const limit = Math.min(query.limit ?? 200, 500);
+
+      try {
+        const service = getEverythingService();
+        const nodes = await service.getNodeBatch(skip, limit);
+        return { nodes };
+      } catch (error) {
+        console.error('[GET /graph/everything/nodes] Failed to get nodes:', {
+          skip,
+          limit,
+          error: error instanceof Error ? error.message : error,
+        });
+        set.status = 500;
+        return { error: 'Failed to get nodes' };
+      }
+    },
+    {
+      query: t.Object({
+        skip: t.Optional(t.Number({ minimum: 0 })),
+        limit: t.Optional(t.Number({ minimum: 1, maximum: 500 })),
+      }),
+    }
+  )
+  // GET /graph/everything/edges - Get paginated batch of all edges
+  .get(
+    '/everything/edges',
+    async ({ query, set, request }) => {
+      const policyError = enforceSensitiveEndpointPolicy(request, set, 'graph-everything-edges');
+      if (policyError) {
+        return policyError;
+      }
+
+      const skip = query.skip ?? 0;
+      const limit = Math.min(query.limit ?? 500, 1000);
+
+      try {
+        const service = getEverythingService();
+        const edges = await service.getEdgeBatch(skip, limit);
+        return { edges };
+      } catch (error) {
+        console.error('[GET /graph/everything/edges] Failed to get edges:', {
+          skip,
+          limit,
+          error: error instanceof Error ? error.message : error,
+        });
+        set.status = 500;
+        return { error: 'Failed to get edges' };
+      }
+    },
+    {
+      query: t.Object({
+        skip: t.Optional(t.Number({ minimum: 0 })),
+        limit: t.Optional(t.Number({ minimum: 1, maximum: 1000 })),
       }),
     }
   );

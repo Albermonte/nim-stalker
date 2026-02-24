@@ -503,7 +503,7 @@ export function GraphCanvas() {
       cy.add([
         ...nodesToAddWithPosition,
         ...edgesToAdd.map((e) => ({ group: 'edges' as const, data: { ...e.data } })),
-      ]);
+      ] as any);
     }
 
     // Check if we need to relayout
@@ -904,6 +904,34 @@ export function GraphCanvas() {
           });
           const layout = cy.layout(getLayoutOptions('directed-flow', freshNodeCount) as any);
           trackAndRun(layout);
+        } else if (
+          freshNodeCount > 500
+          && (layoutMode === 'fcose' || layoutMode === 'fcose-weighted' || layoutMode === 'cola')
+        ) {
+          // Large graph override: fcose/cola are O(n² × iterations) and will
+          // freeze or crash the browser on thousands of nodes. Use dagre
+          // instead — it's O(V+E) and already registered.
+          const runFastLayout = async () => {
+            try {
+              await ensureLayoutRegistered('dagre-tb');
+              if (layoutGeneration !== layoutGenerationRef.current) return;
+
+              const dagreOpts = {
+                ...getLayoutOptions('dagre-tb', freshNodeCount),
+                // Disable animation for very large graphs to avoid rendering cost
+                animate: freshNodeCount <= 1000,
+                animationDuration: freshNodeCount <= 1000 ? 500 : 0,
+              };
+              const layout = cy.layout(dagreOpts as any);
+              trackAndRun(layout);
+            } catch (err) {
+              if (layoutGeneration !== layoutGenerationRef.current) return;
+              console.warn('Dagre fallback failed, trying fcose:', err);
+              const fallback = cy.layout(getLayoutOptions('fcose', freshNodeCount) as any);
+              trackAndRun(fallback);
+            }
+          };
+          runFastLayout();
         } else {
           // All other layouts (including fcose first-time): use config registry
           // Dynamically load layout engine if needed, then run
