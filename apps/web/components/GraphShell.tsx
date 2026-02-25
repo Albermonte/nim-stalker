@@ -9,6 +9,7 @@ import { RecentTransactionsPanel } from '@/components/sidebar/RecentTransactions
 import { FilterPanel } from '@/components/sidebar/FilterPanel';
 import { DetailsPanel } from '@/components/sidebar/DetailsPanel';
 import { GraphControls } from '@/components/graph/GraphControls';
+import { GraphStats } from '@/components/graph/GraphStats';
 import { GraphErrorBoundary } from '@/components/graph/GraphErrorBoundary';
 
 const GraphCanvas = dynamic(
@@ -73,6 +74,7 @@ export function GraphShell() {
           </Suspense>
         </GraphErrorBoundary>
         <GraphControls />
+        <GraphStats />
       </div>
     </main>
   );
