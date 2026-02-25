@@ -110,7 +110,7 @@ export function GraphControls() {
   );
 
   return (
-    <div className="absolute top-4 right-4 flex flex-col gap-2">
+    <div className="absolute top-4 right-4 flex flex-col gap-2 max-w-48">
       {/* Path View Banner */}
       {pathView.active && (
         <div className="nq-card-yellow">
