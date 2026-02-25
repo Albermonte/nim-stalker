@@ -60,7 +60,7 @@ export function GraphControls() {
   }, [pathView.active, pathView.stats, pathView.from, pathView.to, router]);
 
   const layoutSelector = (
-    <div className="nq-card py-2 px-3 text-xs w-48" ref={layoutPanelRef}>
+    <div className="nq-card py-2 px-3 text-xs w-full" ref={layoutPanelRef}>
       <div className="nq-label mb-1">Layout: {getLayoutLabel(layoutMode)}</div>
       <div className="space-y-0.5">
         {LAYOUT_CATEGORIES.map((cat) => {
