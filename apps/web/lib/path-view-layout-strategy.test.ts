@@ -7,6 +7,7 @@ describe('path-view-layout-strategy', () => {
       pathViewActive: true,
       nodeCount: 2,
       pathNodeOrderLength: 2,
+      pathCount: 1,
       layoutMode: 'fcose',
     });
 
@@ -18,6 +19,7 @@ describe('path-view-layout-strategy', () => {
       pathViewActive: true,
       nodeCount: 5,
       pathNodeOrderLength: 5,
+      pathCount: 1,
       layoutMode: 'fcose',
     });
 
@@ -29,6 +31,7 @@ describe('path-view-layout-strategy', () => {
       pathViewActive: true,
       nodeCount: 5,
       pathNodeOrderLength: 5,
+      pathCount: 1,
       layoutMode: 'cola',
     });
 
@@ -40,9 +43,22 @@ describe('path-view-layout-strategy', () => {
       pathViewActive: false,
       nodeCount: 2,
       pathNodeOrderLength: 2,
+      pathCount: 1,
       layoutMode: 'fcose',
     });
 
     expect(strategy).toBe('mode-layout');
+  });
+
+  test('returns mode-layout for tiny graph when multiple paths are active', () => {
+    const strategy = getPathViewLayoutStrategy({
+      pathViewActive: true,
+      nodeCount: 2,
+      pathNodeOrderLength: 2,
+      pathCount: 2,
+      layoutMode: 'fcose',
+    });
+
+    expect(strategy).toBe('path-fcose');
   });
 });

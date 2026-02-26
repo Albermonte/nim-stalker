@@ -3,6 +3,7 @@ import {
   addressToUrlSlug,
   buildAddressRoute,
   buildAddressTxRoute,
+  buildMultiPathUrl,
   buildPathUrl,
   buildTxRoute,
   safeDecodeURIComponent,
@@ -41,10 +42,29 @@ describe('url-utils', () => {
   });
 
   describe('buildPathUrl', () => {
-    test('builds canonical /path query route', () => {
+    test('builds canonical /path query route via single p entry', () => {
       const from = addressToUrlSlug('NQ11 AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA');
       const to = addressToUrlSlug('NQ22 BBBB BBBB BBBB BBBB BBBB BBBB BBBB BBBB');
-      expect(buildPathUrl(from, to, 3, false)).toBe(`/path?from=${from}&to=${to}&maxHops=3&directed=false`);
+      expect(buildPathUrl(from, to, 3, false)).toBe(`/path?p=${from}%2C${to}%2C3%2Cfalse`);
+    });
+  });
+
+  describe('buildMultiPathUrl', () => {
+    test('builds canonical /path query route with repeated p entries', () => {
+      const fromA = addressToUrlSlug('NQ11 AAAA AAAA AAAA AAAA AAAA AAAA AAAA AAAA');
+      const toB = addressToUrlSlug('NQ22 BBBB BBBB BBBB BBBB BBBB BBBB BBBB BBBB');
+      const toC = addressToUrlSlug('NQ33 CCCC CCCC CCCC CCCC CCCC CCCC CCCC CCCC');
+
+      expect(
+        buildMultiPathUrl([
+          { from: fromA, to: toB, maxHops: 3, directed: false },
+          { from: fromA, to: toC, maxHops: 4, directed: true },
+        ]),
+      ).toBe(`/path?p=${fromA}%2C${toB}%2C3%2Cfalse&p=${fromA}%2C${toC}%2C4%2Ctrue`);
+    });
+
+    test('returns /path when no entries are provided', () => {
+      expect(buildMultiPathUrl([])).toBe('/path');
     });
   });
 

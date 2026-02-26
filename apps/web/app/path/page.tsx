@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useGraphStore } from '@/store/graph-store';
 import { GraphShell } from '@/components/GraphShell';
-import { isPathRequestAlreadyActive, parsePathRequest } from './path-state';
+import { isPathRequestSetAlreadyActive, parsePathRequests } from './path-state';
 
 function PathPageInner() {
   const searchParams = useSearchParams();
@@ -14,7 +14,7 @@ function PathPageInner() {
   const searchParamsKey = searchParams.toString();
 
   useEffect(() => {
-    const parsed = parsePathRequest(new URLSearchParams(searchParamsKey));
+    const parsed = parsePathRequests(new URLSearchParams(searchParamsKey));
     if (!parsed.ok) {
       if (parsed.reason === 'missing_params') {
         toast.error('Missing path parameters: from and to are required');
@@ -25,24 +25,27 @@ function PathPageInner() {
       return;
     }
 
-    const request = parsed.value;
+    const requests = parsed.value;
+    const requestSetKey = requests.map((request) => request.requestKey).join('||');
     const state = useGraphStore.getState();
 
-    if (isPathRequestAlreadyActive(state.pathView, request)) {
-      lastRequestKeyRef.current = request.requestKey;
+    if (isPathRequestSetAlreadyActive(state.pathView, requests)) {
+      lastRequestKeyRef.current = requestSetKey;
       return;
     }
 
-    if (lastRequestKeyRef.current === request.requestKey) {
+    if (lastRequestKeyRef.current === requestSetKey) {
       return;
     }
-    lastRequestKeyRef.current = request.requestKey;
+    lastRequestKeyRef.current = requestSetKey;
 
-    const { setSkipInitialLoad, setPathModeMaxHops, setPathModeDirected, findPath } = state;
+    const { setSkipInitialLoad, setPathModeMaxHops, setPathModeDirected, loadPathSequence } = state;
     setSkipInitialLoad(true);
-    setPathModeMaxHops(request.maxHops);
-    setPathModeDirected(request.directed);
-    void findPath(request.fromAddress, request.toAddress, request.maxHops);
+    if (requests[0]) {
+      setPathModeMaxHops(requests[0].maxHops);
+      setPathModeDirected(requests[0].directed);
+    }
+    void loadPathSequence(requests);
   }, [router, searchParamsKey]);
 
   return <GraphShell />;

@@ -30,6 +30,15 @@ export interface MockGraphStore {
     active: boolean;
     from: string | null;
     to: string | null;
+    paths: Array<{
+      from: string;
+      to: string;
+      maxHops: number;
+      directed: boolean;
+      requestKey: string;
+    }>;
+    startNodeIds: Set<string>;
+    endNodeIds: Set<string>;
     pathNodeIds: Set<string>;
     pathEdgeIds: Set<string>;
     pathNodeOrder: string[];
@@ -61,8 +70,12 @@ export interface MockGraphStore {
 
   // Path mode actions
   setPathMode: ReturnType<typeof mock>;
+  setPathModeFrom: ReturnType<typeof mock>;
+  setPathModeTo: ReturnType<typeof mock>;
   setPathModeMaxHops: ReturnType<typeof mock>;
   setPathModeDirected: ReturnType<typeof mock>;
+  findPath: ReturnType<typeof mock>;
+  loadPathSequence: ReturnType<typeof mock>;
   enterPathView: ReturnType<typeof mock>;
   exitPathView: ReturnType<typeof mock>;
 
@@ -97,6 +110,9 @@ export function createMockStore(overrides: Partial<MockGraphStore> = {}): MockGr
       active: false,
       from: null,
       to: null,
+      paths: [],
+      startNodeIds: new Set(),
+      endNodeIds: new Set(),
       pathNodeIds: new Set(),
       pathEdgeIds: new Set(),
       pathNodeOrder: [],
@@ -121,8 +137,12 @@ export function createMockStore(overrides: Partial<MockGraphStore> = {}): MockGr
     setError: mock(() => {}),
 
     setPathMode: mock(() => {}),
+    setPathModeFrom: mock(() => {}),
+    setPathModeTo: mock(() => {}),
     setPathModeMaxHops: mock(() => {}),
     setPathModeDirected: mock(() => {}),
+    findPath: mock(() => Promise.resolve()),
+    loadPathSequence: mock(() => Promise.resolve()),
     enterPathView: mock(() => {}),
     exitPathView: mock(() => {}),
 

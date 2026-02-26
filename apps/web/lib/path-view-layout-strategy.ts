@@ -6,19 +6,20 @@ interface PathViewLayoutStrategyInput {
   pathViewActive: boolean;
   nodeCount: number;
   pathNodeOrderLength: number;
+  pathCount: number;
   layoutMode: LayoutMode;
 }
 
 export function getPathViewLayoutStrategy(
   input: PathViewLayoutStrategyInput
 ): PathViewLayoutStrategy {
-  const { pathViewActive, nodeCount, pathNodeOrderLength, layoutMode } = input;
+  const { pathViewActive, nodeCount, pathNodeOrderLength, pathCount, layoutMode } = input;
 
   if (!pathViewActive) {
     return 'mode-layout';
   }
 
-  if (nodeCount === 2 && pathNodeOrderLength >= 2) {
+  if (pathCount <= 1 && nodeCount === 2 && pathNodeOrderLength >= 2) {
     return 'tiny';
   }
 

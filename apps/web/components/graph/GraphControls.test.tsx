@@ -28,10 +28,17 @@ function createStoreState() {
       directed: false,
     },
     setPathMode: mock(() => {}),
+    setPathModeFrom: mock(() => {}),
+    setPathModeTo: mock(() => {}),
     setPathModeMaxHops: mock(() => {}),
     setPathModeDirected: mock(() => {}),
     pathView: {
       active: true,
+      paths: [
+        { from: 'A', to: 'B', maxHops: 3, directed: false, requestKey: 'A|B|3|false' },
+      ],
+      startNodeIds: new Set(['A']),
+      endNodeIds: new Set(['B']),
       pathNodeIds: new Set(['A', 'B']),
       pathNodeOrder: ['A', 'B'],
       pathEdgeIds: new Set(['A->B']),
@@ -86,6 +93,7 @@ describe('GraphControls', () => {
 
     expect(html).toContain('All Paths');
     expect(html).toContain('Layout: fCoSE');
+    expect(html).toContain('Add Path');
     expect(html).toContain('Exit Path View');
   });
 
@@ -93,10 +101,14 @@ describe('GraphControls', () => {
     mockStore.pathView.pathNodeOrder = ['A', 'B', 'D', 'C'];
     mockStore.pathView.from = 'A';
     mockStore.pathView.to = 'D';
+    mockStore.pathView.paths = [
+      { from: 'A', to: 'D', maxHops: 3, directed: false, requestKey: 'A|D|3|false' },
+      { from: 'A', to: 'C', maxHops: 4, directed: true, requestKey: 'A|C|4|true' },
+    ];
 
     render(<GraphControls />);
 
     await waitFor(() => expect(replaceMock).toHaveBeenCalledTimes(1));
-    expect(replaceMock.mock.calls[0]?.[0]).toBe('/path?from=A&to=D&maxHops=3&directed=false');
+    expect(replaceMock.mock.calls[0]?.[0]).toBe('/path?p=A%2CD%2C3%2Cfalse&p=A%2CC%2C4%2Ctrue');
   });
 });

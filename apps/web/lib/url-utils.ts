@@ -1,6 +1,15 @@
 import { ValidationUtils } from '@nimiq/utils';
 import type { Direction } from '@nim-stalker/shared';
 
+export const MAX_PATH_URL_ENTRIES = 10;
+
+export interface PathUrlEntry {
+  from: string;
+  to: string;
+  maxHops: number;
+  directed: boolean;
+}
+
 /**
  * Check if a URL slug is a valid Nimiq address (spaceless format)
  */
@@ -76,11 +85,24 @@ export function urlSlugToAddress(slug: string): string {
  * Build a shareable path URL
  */
 export function buildPathUrl(from: string, to: string, maxHops: number, directed: boolean): string {
-  const params = new URLSearchParams({
-    from: addressToUrlSlug(from),
-    to: addressToUrlSlug(to),
-    maxHops: String(maxHops),
-    directed: String(directed),
-  });
-  return `/path?${params.toString()}`;
+  return buildMultiPathUrl([{ from, to, maxHops, directed }]);
+}
+
+/**
+ * Build a shareable multi-path URL.
+ * Uses repeated `p` params in insertion order:
+ * /path?p=<from>,<to>,<maxHops>,<directed>&p=...
+ */
+export function buildMultiPathUrl(entries: PathUrlEntry[]): string {
+  const params = new URLSearchParams();
+  const boundedEntries = entries.slice(0, MAX_PATH_URL_ENTRIES);
+
+  for (const entry of boundedEntries) {
+    const from = addressToUrlSlug(entry.from);
+    const to = addressToUrlSlug(entry.to);
+    params.append('p', `${from},${to},${entry.maxHops},${entry.directed}`);
+  }
+
+  const query = params.toString();
+  return query ? `/path?${query}` : '/path';
 }

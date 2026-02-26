@@ -627,6 +627,7 @@ export function GraphCanvas() {
           pathViewActive: pathView.active,
           nodeCount: freshNodeCount,
           pathNodeOrderLength: pathView.pathNodeOrder.length,
+          pathCount: pathView.paths.length,
           layoutMode,
         });
 
@@ -970,20 +971,24 @@ export function GraphCanvas() {
       cy.edges().removeClass('path-outgoing path-incoming');
 
       const pathOrder = pathView.pathNodeOrder;
-      const pathStart = pathView.from ?? pathOrder[0] ?? null;
-      const pathEnd = pathView.to ?? pathOrder[pathOrder.length - 1] ?? null;
+      const startNodeIds = pathView.startNodeIds.size > 0
+        ? Array.from(pathView.startNodeIds)
+        : [pathView.from ?? pathOrder[0] ?? null].filter((id): id is string => Boolean(id));
+      const endNodeIds = pathView.endNodeIds.size > 0
+        ? Array.from(pathView.endNodeIds)
+        : [pathView.to ?? pathOrder[pathOrder.length - 1] ?? null].filter((id): id is string => Boolean(id));
 
-      if (pathStart) {
-        cy.getElementById(pathStart).addClass('path-start');
-      }
-      if (pathEnd && pathEnd !== pathStart) {
-        cy.getElementById(pathEnd).addClass('path-end');
-      }
+      startNodeIds.forEach((startNodeId) => {
+        cy.getElementById(startNodeId).addClass('path-start');
+      });
+      endNodeIds.forEach((endNodeId) => {
+        cy.getElementById(endNodeId).addClass('path-end');
+      });
 
       // Color path edges by tx direction relative to path start.
       // Away from start => outgoing (pink), toward start => incoming (green).
       const distances = new Map<string, number>();
-      if (pathStart) {
+      if (startNodeIds.length > 0) {
         const adjacency = new Map<string, Set<string>>();
 
         pathView.pathEdgeIds.forEach((edgeId) => {
@@ -998,8 +1003,12 @@ export function GraphCanvas() {
           adjacency.get(target)!.add(source);
         });
 
-        const queue: string[] = [pathStart];
-        distances.set(pathStart, 0);
+        const queue: string[] = [];
+        startNodeIds.forEach((startNodeId) => {
+          if (distances.has(startNodeId)) return;
+          distances.set(startNodeId, 0);
+          queue.push(startNodeId);
+        });
 
         while (queue.length > 0) {
           const current = queue.shift()!;
@@ -1037,7 +1046,7 @@ export function GraphCanvas() {
         }
 
         // Fallback when distances are equal/unavailable.
-        if (pathStart && target === pathStart) {
+        if (startNodeIds.includes(target)) {
           edge.addClass('path-incoming');
           return;
         }
@@ -1046,7 +1055,12 @@ export function GraphCanvas() {
     }
 
     // Stabilize 2-node path views on initial load: force deterministic vertical positions.
-    if (pathView.active && pathView.pathNodeOrder.length >= 2 && cy.nodes().length === 2) {
+    if (
+      pathView.active &&
+      pathView.pathNodeOrder.length >= 2 &&
+      cy.nodes().length === 2 &&
+      pathView.paths.length <= 1
+    ) {
       const tinyPathOrder = (pathView.from && pathView.to)
         ? [pathView.from, pathView.to]
         : pathView.pathNodeOrder;
@@ -1061,7 +1075,21 @@ export function GraphCanvas() {
     }
 
     prevNodeCountRef.current = currentNodeCount;
-  }, [cyInstance, nodes, edges, pathView.active, pathView.from, pathView.to, pathView.pathNodeOrder, pathView.pathEdgeIds, clearLastExpanded, layoutMode]);
+  }, [
+    cyInstance,
+    nodes,
+    edges,
+    pathView.active,
+    pathView.from,
+    pathView.to,
+    pathView.paths,
+    pathView.startNodeIds,
+    pathView.endNodeIds,
+    pathView.pathNodeOrder,
+    pathView.pathEdgeIds,
+    clearLastExpanded,
+    layoutMode,
+  ]);
 
   // Highlight edges connected to selected node with direction-based colors
   useEffect(() => {

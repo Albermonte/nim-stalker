@@ -2,9 +2,12 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { useGraphStore, type LayoutMode } from '@/store/graph-store';
+import { useGraphStore, MAX_COMBINED_PATHS } from '@/store/graph-store';
 import { LAYOUT_CATEGORIES, findLayoutCategory, getLayoutLabel } from '@/lib/layout-configs';
-import { buildPathUrl } from '@/lib/url-utils';
+import { buildMultiPathUrl, buildPathUrl } from '@/lib/url-utils';
+import { resolveAddressInput } from '@/lib/address-label-index';
+import { formatNimiqAddress } from '@/lib/format-utils';
+import { AddressAutocompleteInput } from '@/components/ui/AddressAutocompleteInput';
 
 const MAX_HOPS_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
@@ -16,9 +19,29 @@ function getPathModeStatusText(from: string | null, to: string | null): string {
 
 export function GraphControls() {
   const router = useRouter();
-  const { clearGraph, loading, pathMode, setPathMode, setPathModeMaxHops, setPathModeDirected, pathView, exitPathView, layoutMode, setLayoutMode, expandAllNodes, nodes } = useGraphStore();
+  const {
+    clearGraph,
+    loading,
+    pathMode,
+    setPathMode,
+    setPathModeFrom,
+    setPathModeTo,
+    setPathModeMaxHops,
+    setPathModeDirected,
+    pathView,
+    exitPathView,
+    layoutMode,
+    setLayoutMode,
+    expandAllNodes,
+    nodes,
+  } = useGraphStore();
   const [showHelp, setShowHelp] = useState(false);
   const [showEnchiladaConfirm, setShowEnchiladaConfirm] = useState(false);
+  const [pathFromInput, setPathFromInput] = useState('');
+  const [pathToInput, setPathToInput] = useState('');
+  const [pathFromError, setPathFromError] = useState<string | null>(null);
+  const [pathToError, setPathToError] = useState<string | null>(null);
+  const [pathModeError, setPathModeError] = useState<string | null>(null);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(() => {
     return findLayoutCategory(layoutMode)?.id ?? null;
   });
@@ -54,10 +77,89 @@ export function GraphControls() {
 
   // Sync URL when entering/exiting path view
   useEffect(() => {
-    if (pathView.active && pathView.stats && pathView.from && pathView.to) {
+    if (!pathView.active) return;
+
+    if (pathView.paths.length > 0) {
+      router.replace(buildMultiPathUrl(pathView.paths));
+      return;
+    }
+
+    // Backward-compatible fallback for legacy state shape
+    if (pathView.stats && pathView.from && pathView.to) {
       router.replace(buildPathUrl(pathView.from, pathView.to, pathView.stats.maxHops, pathView.stats.directed));
     }
-  }, [pathView.active, pathView.stats, pathView.from, pathView.to, router]);
+  }, [pathView.active, pathView.paths, pathView.stats, pathView.from, pathView.to, router]);
+
+  useEffect(() => {
+    if (!pathMode.active) return;
+    setPathFromInput(pathMode.from ?? '');
+    setPathToInput(pathMode.to ?? '');
+  }, [pathMode.active, pathMode.from, pathMode.to]);
+
+  const resolveAndSetPathEndpoint = (
+    value: string,
+    endpoint: 'from' | 'to',
+    options?: { silentErrors?: boolean },
+  ) => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      if (endpoint === 'from') {
+        setPathFromError(null);
+        setPathModeFrom(null);
+      } else {
+        setPathToError(null);
+        setPathModeTo(null);
+      }
+      return;
+    }
+
+    const { address, error } = resolveAddressInput(trimmed);
+    if (!address) {
+      if (!options?.silentErrors) {
+        if (endpoint === 'from') {
+          setPathFromError(error);
+        } else {
+          setPathToError(error);
+        }
+      }
+      return;
+    }
+
+    const formattedAddress = formatNimiqAddress(address);
+    if (endpoint === 'from') {
+      if (pathMode.to && pathMode.to === formattedAddress) {
+        setPathFromError('Start and end nodes must be different');
+        setPathModeFrom(null);
+        return;
+      }
+      setPathFromError(null);
+      setPathModeFrom(formattedAddress);
+      return;
+    }
+
+    if (pathMode.from && pathMode.from === formattedAddress) {
+      setPathToError('Start and end nodes must be different');
+      setPathModeTo(null);
+      return;
+    }
+    setPathToError(null);
+    setPathModeTo(formattedAddress);
+  };
+
+  const startPathMode = (from?: string | null) => {
+    if (pathView.active && pathView.paths.length >= MAX_COMBINED_PATHS) {
+      setPathModeError(`You can combine up to ${MAX_COMBINED_PATHS} paths`);
+      return;
+    }
+
+    setPathModeError(null);
+    setPathFromError(null);
+    setPathToError(null);
+    setPathMode(true, from ?? undefined);
+    setPathFromInput(from ?? '');
+    setPathToInput('');
+    setPathModeTo(null);
+  };
 
   const layoutSelector = (
     <div className="nq-card py-2 px-3 text-xs w-full" ref={layoutPanelRef}>
@@ -126,7 +228,26 @@ export function GraphControls() {
                 {pathView.stats.directed && <div className="text-nq-pink font-bold">Outgoing only</div>}
               </>
             )}
+            <div>Paths: {pathView.paths.length}</div>
           </div>
+          <button
+            onClick={() => {
+              if (pathMode.active) {
+                setPathMode(false);
+                setPathModeError(null);
+                setPathFromError(null);
+                setPathToError(null);
+                return;
+              }
+
+              const latestPathStart = pathView.paths[pathView.paths.length - 1]?.from ?? pathView.from;
+              startPathMode(latestPathStart ?? null);
+            }}
+            className={pathMode.active ? 'nq-btn-pink w-full mt-3 text-xs py-1' : 'nq-btn-periwinkle w-full mt-3 text-xs py-1'}
+            disabled={!pathMode.active && pathView.paths.length >= MAX_COMBINED_PATHS}
+          >
+            {pathMode.active ? 'Cancel Path' : 'Add Path'}
+          </button>
           <button
             onClick={() => { exitPathView(); router.replace('/'); }}
             className="nq-btn-pink w-full mt-3 text-xs py-1"
@@ -171,44 +292,97 @@ export function GraphControls() {
           {layoutSelector}
 
           <button
-            onClick={() => setPathMode(!pathMode.active)}
+            onClick={() => {
+              if (pathMode.active) {
+                setPathMode(false);
+                setPathModeError(null);
+                setPathFromError(null);
+                setPathToError(null);
+                return;
+              }
+              startPathMode(pathMode.from);
+            }}
             className={pathMode.active ? 'nq-btn-pink text-sm' : 'nq-btn-periwinkle text-sm'}
             title={pathMode.active ? 'Cancel path finding' : 'Find path between nodes'}
           >
             {pathMode.active ? 'Cancel Path' : 'Find Path'}
           </button>
-
-          {pathMode.active && (
-            <div className="nq-card-yellow text-xs space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="nq-label">Max Hops:</span>
-                <select
-                  value={pathMode.maxHops}
-                  onChange={(e) => setPathModeMaxHops(Number(e.target.value))}
-                  className="nq-select text-xs py-1 px-2 flex-1"
-                >
-                  {MAX_HOPS_OPTIONS.map((hop) => (
-                    <option key={hop} value={hop}>
-                      {hop}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={pathMode.directed}
-                  onChange={(e) => setPathModeDirected(e.target.checked)}
-                  className="w-4 h-4 accent-nq-pink cursor-pointer"
-                />
-                <span className="nq-label">Directed only</span>
-              </label>
-              <span className="font-bold uppercase block">
-                {getPathModeStatusText(pathMode.from, pathMode.to)}
-              </span>
-            </div>
-          )}
         </>
+      )}
+
+      {pathModeError && (
+        <div className="nq-card-pink text-xs">
+          <span className="font-bold uppercase">{pathModeError}</span>
+        </div>
+      )}
+
+      {pathMode.active && (
+        <div className="nq-card-yellow text-xs space-y-2">
+          <AddressAutocompleteInput
+            value={pathFromInput}
+            onChange={(value) => {
+              setPathFromInput(value);
+              resolveAndSetPathEndpoint(value, 'from', { silentErrors: false });
+            }}
+            onEnter={() => resolveAndSetPathEndpoint(pathFromInput, 'from', { silentErrors: false })}
+            placeholder="Start: NQ42... or label"
+            ariaLabel="Path start node"
+            disabled={loading}
+          />
+
+          {pathFromError && (
+            <p className="text-red-700 text-xs font-bold uppercase bg-nq-white/50 rounded-lg px-2 py-1">{pathFromError}</p>
+          )}
+
+          <AddressAutocompleteInput
+            value={pathToInput}
+            onChange={(value) => {
+              setPathToInput(value);
+              resolveAndSetPathEndpoint(value, 'to', { silentErrors: false });
+            }}
+            onEnter={() => resolveAndSetPathEndpoint(pathToInput, 'to', { silentErrors: false })}
+            placeholder="End: NQ42... or label"
+            ariaLabel="Path end node"
+            disabled={loading}
+          />
+
+          {pathToError && (
+            <p className="text-red-700 text-xs font-bold uppercase bg-nq-white/50 rounded-lg px-2 py-1">{pathToError}</p>
+          )}
+
+          {pathView.active && pathView.paths.length >= MAX_COMBINED_PATHS && (
+            <p className="text-red-700 text-xs font-bold uppercase bg-nq-white/50 rounded-lg px-2 py-1">
+              Path limit reached ({MAX_COMBINED_PATHS})
+            </p>
+          )}
+
+          <div className="flex items-center gap-2">
+            <span className="nq-label">Max Hops:</span>
+            <select
+              value={pathMode.maxHops}
+              onChange={(e) => setPathModeMaxHops(Number(e.target.value))}
+              className="nq-select text-xs py-1 px-2 flex-1"
+            >
+              {MAX_HOPS_OPTIONS.map((hop) => (
+                <option key={hop} value={hop}>
+                  {hop}
+                </option>
+              ))}
+            </select>
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={pathMode.directed}
+              onChange={(e) => setPathModeDirected(e.target.checked)}
+              className="w-4 h-4 accent-nq-pink cursor-pointer"
+            />
+            <span className="nq-label">Directed only</span>
+          </label>
+          <span className="font-bold uppercase block">
+            {getPathModeStatusText(pathMode.from, pathMode.to)}
+          </span>
+        </div>
       )}
 
       {loading && (

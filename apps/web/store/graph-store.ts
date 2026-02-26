@@ -23,7 +23,28 @@ export type LayoutMode =
   | 'concentric-volume';
 
 const LIVE_BALANCE_BATCH_SIZE = 100;
+export const MAX_COMBINED_PATHS = 10;
 let latestHomeReloadRequestId = 0;
+
+export interface PathRequestMetadata {
+  from: string;
+  to: string;
+  maxHops: number;
+  directed: boolean;
+  requestKey: string;
+}
+
+interface PathSequenceRequest {
+  fromAddress: string;
+  toAddress: string;
+  maxHops: number;
+  directed: boolean;
+  requestKey: string;
+}
+
+function buildPathRequestKey(from: string, to: string, maxHops: number, directed: boolean): string {
+  return `${from}|${to}|${maxHops}|${directed}`;
+}
 
 function chunkArray<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
@@ -54,6 +75,9 @@ interface GraphState {
     active: boolean;
     from: string | null;
     to: string | null;
+    paths: PathRequestMetadata[];
+    startNodeIds: Set<string>;
+    endNodeIds: Set<string>;
     pathNodeIds: Set<string>;
     pathNodeOrder: string[];  // Ordered array for layout behavior (not canonical endpoints)
     pathEdgeIds: Set<string>;
@@ -91,15 +115,20 @@ interface GraphActions {
   addAddress: (address: string) => Promise<void>;
   findPath: (from: string, to: string, maxHops?: number) => Promise<void>;
   setPathMode: (active: boolean, from?: string) => void;
+  setPathModeFrom: (from: string | null) => void;
+  setPathModeTo: (to: string | null) => void;
   setPathModeMaxHops: (maxHops: number) => void;
   setPathModeDirected: (directed: boolean) => void;
+  loadPathSequence: (requests: PathSequenceRequest[]) => Promise<void>;
   clearGraph: () => void;
   getCytoscapeElements: () => { nodes: CytoscapeNode[]; edges: CytoscapeEdge[] };
   enterPathView: (
     pathNodes: CytoscapeNode[],
     pathEdges: CytoscapeEdge[],
     stats?: { nodeCount: number; edgeCount: number; maxHops: number; shortestPath: number; directed: boolean },
-    endpoints?: { from?: string | null; to?: string | null }
+    endpoints?: { from?: string | null; to?: string | null },
+    request?: PathRequestMetadata,
+    replace?: boolean
   ) => void;
   exitPathView: () => void;
   clearLastExpanded: () => void;
@@ -134,6 +163,9 @@ const initialState: GraphState = {
     active: false,
     from: null,
     to: null,
+    paths: [],
+    startNodeIds: new Set(),
+    endNodeIds: new Set(),
     pathNodeIds: new Set(),
     pathNodeOrder: [],
     pathEdgeIds: new Set(),
@@ -463,7 +495,18 @@ export const useGraphStore = create<GraphState & GraphActions>()(
       const hops = maxHops ?? get().pathMode.maxHops;
       const directed = get().pathMode.directed;
       const requestKey = `path:${from}-${to}-${hops}-${directed}`;
+      const canonicalRequestKey = buildPathRequestKey(from, to, hops, directed);
       const { setLoading, setError, enterPathView, inFlightRequests } = get();
+      const state = get();
+
+      if (
+        state.pathView.active &&
+        state.pathView.paths.length >= MAX_COMBINED_PATHS &&
+        !state.pathView.paths.some((entry) => entry.requestKey === canonicalRequestKey)
+      ) {
+        setError(`You can combine up to ${MAX_COMBINED_PATHS} paths`);
+        return;
+      }
 
       // Skip if already in progress
       if (inFlightRequests.has(requestKey)) {
@@ -487,7 +530,19 @@ export const useGraphStore = create<GraphState & GraphActions>()(
 
         if (result.subgraph) {
           // Enter path view mode with subgraph data and stats
-          enterPathView(result.subgraph.nodes, result.subgraph.edges, result.stats, { from, to });
+          enterPathView(
+            result.subgraph.nodes,
+            result.subgraph.edges,
+            result.stats,
+            { from, to },
+            {
+              from,
+              to,
+              maxHops: hops,
+              directed,
+              requestKey: canonicalRequestKey,
+            },
+          );
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to find path');
@@ -516,6 +571,23 @@ export const useGraphStore = create<GraphState & GraphActions>()(
         };
       }),
 
+    setPathModeFrom: (from) =>
+      set((state) => {
+        state.pathMode.from = from;
+        if (from && state.pathMode.to === from) {
+          state.pathMode.to = null;
+        }
+      }),
+
+    setPathModeTo: (to) =>
+      set((state) => {
+        if (to && state.pathMode.from === to) {
+          state.pathMode.to = null;
+          return;
+        }
+        state.pathMode.to = to;
+      }),
+
     setPathModeMaxHops: (maxHops) =>
       set((state) => {
         state.pathMode.maxHops = maxHops;
@@ -525,6 +597,85 @@ export const useGraphStore = create<GraphState & GraphActions>()(
       set((state) => {
         state.pathMode.directed = directed;
       }),
+
+    loadPathSequence: async (requests) => {
+      if (requests.length === 0) return;
+
+      const { setLoading, setError, enterPathView } = get();
+      setLoading(true);
+      setError(null);
+
+      try {
+        for (let index = 0; index < requests.length; index += 1) {
+          const request = requests[index];
+          const current = get();
+          const shouldReplace = index === 0;
+          const pathAlreadyPresent = current.pathView.paths.some(
+            (entry) => entry.requestKey === request.requestKey,
+          );
+
+          if (
+            !shouldReplace &&
+            !pathAlreadyPresent &&
+            current.pathView.paths.length >= MAX_COMBINED_PATHS
+          ) {
+            toast.error(`You can combine up to ${MAX_COMBINED_PATHS} paths`);
+            break;
+          }
+
+          try {
+            const result = await api.findSubgraph(
+              request.fromAddress,
+              request.toAddress,
+              request.maxHops,
+              request.directed,
+            );
+
+            if (!result.found || !result.subgraph) {
+              if (shouldReplace) {
+                setError('No path found between these addresses');
+                break;
+              }
+              toast.error(`No path found for ${request.fromAddress} → ${request.toAddress}`);
+              continue;
+            }
+
+            enterPathView(
+              result.subgraph.nodes,
+              result.subgraph.edges,
+              result.stats,
+              { from: request.fromAddress, to: request.toAddress },
+              {
+                from: request.fromAddress,
+                to: request.toAddress,
+                maxHops: request.maxHops,
+                directed: request.directed,
+                requestKey: request.requestKey,
+              },
+              shouldReplace,
+            );
+          } catch (err) {
+            const message = err instanceof Error ? err.message : 'Failed to find path';
+            if (shouldReplace) {
+              setError(message);
+              break;
+            }
+            toast.error(message);
+          }
+        }
+      } finally {
+        setLoading(false);
+        set((state) => {
+          state.pathMode = {
+            active: false,
+            from: null,
+            to: null,
+            maxHops: state.pathMode.maxHops,
+            directed: state.pathMode.directed,
+          };
+        });
+      }
+    },
 
     clearGraph: () => {
       set({
@@ -540,6 +691,9 @@ export const useGraphStore = create<GraphState & GraphActions>()(
           active: false,
           from: null,
           to: null,
+          paths: [],
+          startNodeIds: new Set(),
+          endNodeIds: new Set(),
           pathNodeIds: new Set(),
           pathNodeOrder: [],
           pathEdgeIds: new Set(),
@@ -550,51 +704,162 @@ export const useGraphStore = create<GraphState & GraphActions>()(
       });
     },
 
-    enterPathView: (pathNodes, pathEdges, stats, endpoints) => {
+    enterPathView: (pathNodes, pathEdges, stats, endpoints, request, replace = false) => {
       const state = get();
+      const shouldReplace = replace || !state.pathView.active;
 
-      // Save current graph state
-      const savedNodes = new Map(state.nodes);
-      const savedEdges = new Map(state.edges);
-
-      // Create new maps with only path elements
-      const pathNodesMap = new Map<string, CytoscapeNode>();
-      const pathEdgesMap = new Map<string, CytoscapeEdge>();
-      const pathNodeIds = new Set<string>();
-      const pathEdgeIds = new Set<string>();
-
-      // Preserve the order of path nodes (backend returns them in order)
-      const pathNodeOrder: string[] = [];
+      const nextPathNodesMap = new Map<string, CytoscapeNode>();
+      const nextPathEdgesMap = new Map<string, CytoscapeEdge>();
+      const nextPathNodeIds = new Set<string>();
+      const nextPathEdgeIds = new Set<string>();
+      const nextPathNodeOrder: string[] = [];
 
       for (const node of pathNodes) {
-        pathNodesMap.set(node.data.id, node);
-        pathNodeIds.add(node.data.id);
-        pathNodeOrder.push(node.data.id);
+        nextPathNodesMap.set(node.data.id, node);
+        nextPathNodeIds.add(node.data.id);
+        nextPathNodeOrder.push(node.data.id);
       }
 
       for (const edge of pathEdges) {
-        pathEdgesMap.set(edge.data.id, edge);
-        pathEdgeIds.add(edge.data.id);
+        nextPathEdgesMap.set(edge.data.id, edge);
+        nextPathEdgeIds.add(edge.data.id);
       }
 
-      const resolvedFrom = endpoints?.from ?? pathNodeOrder[0] ?? null;
-      const resolvedTo = endpoints?.to ?? pathNodeOrder[pathNodeOrder.length - 1] ?? null;
+      const resolvedFrom = endpoints?.from ?? nextPathNodeOrder[0] ?? null;
+      const resolvedTo = endpoints?.to ?? nextPathNodeOrder[nextPathNodeOrder.length - 1] ?? null;
+      const resolvedMaxHops = request?.maxHops ?? stats?.maxHops ?? state.pathMode.maxHops;
+      const resolvedDirected = request?.directed ?? stats?.directed ?? state.pathMode.directed;
+      const resolvedRequestKey = request?.requestKey ??
+        (resolvedFrom && resolvedTo
+          ? buildPathRequestKey(resolvedFrom, resolvedTo, resolvedMaxHops, resolvedDirected)
+          : null);
+
+      const requestEntry = resolvedFrom && resolvedTo && resolvedRequestKey
+        ? {
+            from: resolvedFrom,
+            to: resolvedTo,
+            maxHops: resolvedMaxHops,
+            directed: resolvedDirected,
+            requestKey: resolvedRequestKey,
+          }
+        : null;
+
+      if (shouldReplace) {
+        // Save current non-path graph state. When replacing while already in
+        // path view, preserve the original saved graph instead of the
+        // currently displayed path graph.
+        const savedNodes = state.pathView.active && state.pathView.savedNodes
+          ? state.pathView.savedNodes
+          : new Map(state.nodes);
+        const savedEdges = state.pathView.active && state.pathView.savedEdges
+          ? state.pathView.savedEdges
+          : new Map(state.edges);
+
+        const startNodeIds = new Set<string>();
+        const endNodeIds = new Set<string>();
+        const paths: PathRequestMetadata[] = [];
+
+        if (requestEntry) {
+          startNodeIds.add(requestEntry.from);
+          endNodeIds.add(requestEntry.to);
+          paths.push(requestEntry);
+        }
+
+        set({
+          nodes: nextPathNodesMap,
+          edges: nextPathEdgesMap,
+          selectedNodeId: null,
+          selectedEdgeId: null,
+          pathView: {
+            active: true,
+            from: resolvedFrom,
+            to: resolvedTo,
+            paths,
+            startNodeIds,
+            endNodeIds,
+            pathNodeIds: nextPathNodeIds,
+            pathNodeOrder: nextPathNodeOrder,
+            pathEdgeIds: nextPathEdgeIds,
+            savedNodes,
+            savedEdges,
+            stats: stats || null,
+          },
+        });
+        return;
+      }
+
+      // Append mode
+      const mergedNodesMap = new Map(state.nodes);
+      const mergedEdgesMap = new Map(state.edges);
+
+      for (const [nodeId, node] of nextPathNodesMap.entries()) {
+        mergedNodesMap.set(nodeId, node);
+      }
+      for (const [edgeId, edge] of nextPathEdgesMap.entries()) {
+        mergedEdgesMap.set(edgeId, edge);
+      }
+
+      const mergedPathNodeIds = new Set(state.pathView.pathNodeIds);
+      nextPathNodeIds.forEach((nodeId) => mergedPathNodeIds.add(nodeId));
+
+      const mergedPathEdgeIds = new Set(state.pathView.pathEdgeIds);
+      nextPathEdgeIds.forEach((edgeId) => mergedPathEdgeIds.add(edgeId));
+
+      const mergedPathNodeOrder = [...state.pathView.pathNodeOrder];
+      const seenPathNodes = new Set(mergedPathNodeOrder);
+      for (const nodeId of nextPathNodeOrder) {
+        if (seenPathNodes.has(nodeId)) continue;
+        seenPathNodes.add(nodeId);
+        mergedPathNodeOrder.push(nodeId);
+      }
+
+      const nextPaths = [...state.pathView.paths];
+      if (requestEntry && !nextPaths.some((entry) => entry.requestKey === requestEntry.requestKey)) {
+        nextPaths.push(requestEntry);
+      }
+
+      const mergedStartNodeIds = new Set(state.pathView.startNodeIds);
+      if (requestEntry) {
+        mergedStartNodeIds.add(requestEntry.from);
+      }
+
+      const mergedEndNodeIds = new Set(state.pathView.endNodeIds);
+      if (requestEntry) {
+        mergedEndNodeIds.add(requestEntry.to);
+      }
+
+      const nextStats = {
+        nodeCount: mergedPathNodeIds.size,
+        edgeCount: mergedPathEdgeIds.size,
+        maxHops: nextPaths.length > 0 ? Math.max(...nextPaths.map((entry) => entry.maxHops)) : (stats?.maxHops ?? 0),
+        shortestPath: Math.min(
+          state.pathView.stats?.shortestPath ?? Number.POSITIVE_INFINITY,
+          stats?.shortestPath ?? Number.POSITIVE_INFINITY,
+        ),
+        directed: nextPaths.length > 0 ? nextPaths.every((entry) => entry.directed) : false,
+      };
 
       set({
-        nodes: pathNodesMap,
-        edges: pathEdgesMap,
+        nodes: mergedNodesMap,
+        edges: mergedEdgesMap,
         selectedNodeId: null,
         selectedEdgeId: null,
         pathView: {
           active: true,
-          from: resolvedFrom,
-          to: resolvedTo,
-          pathNodeIds,
-          pathNodeOrder,
-          pathEdgeIds,
-          savedNodes,
-          savedEdges,
-          stats: stats || null,
+          from: state.pathView.from ?? resolvedFrom,
+          to: state.pathView.to ?? resolvedTo,
+          paths: nextPaths,
+          startNodeIds: mergedStartNodeIds,
+          endNodeIds: mergedEndNodeIds,
+          pathNodeIds: mergedPathNodeIds,
+          pathNodeOrder: mergedPathNodeOrder,
+          pathEdgeIds: mergedPathEdgeIds,
+          savedNodes: state.pathView.savedNodes,
+          savedEdges: state.pathView.savedEdges,
+          stats: {
+            ...nextStats,
+            shortestPath: Number.isFinite(nextStats.shortestPath) ? nextStats.shortestPath : 0,
+          },
         },
       });
     },
@@ -616,6 +881,9 @@ export const useGraphStore = create<GraphState & GraphActions>()(
           active: false,
           from: null,
           to: null,
+          paths: [],
+          startNodeIds: new Set(),
+          endNodeIds: new Set(),
           pathNodeIds: new Set(),
           pathNodeOrder: [],
           pathEdgeIds: new Set(),
@@ -745,6 +1013,9 @@ export const useGraphStore = create<GraphState & GraphActions>()(
             active: false,
             from: null,
             to: null,
+            paths: [],
+            startNodeIds: new Set(),
+            endNodeIds: new Set(),
             pathNodeIds: new Set(),
             pathNodeOrder: [],
             pathEdgeIds: new Set(),

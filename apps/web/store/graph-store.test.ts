@@ -88,6 +88,9 @@ describe('graph-store', () => {
         active: false,
         from: null,
         to: null,
+        paths: [],
+        startNodeIds: new Set(),
+        endNodeIds: new Set(),
         pathNodeIds: new Set(),
         pathNodeOrder: [],
         pathEdgeIds: new Set(),
@@ -366,6 +369,32 @@ describe('graph-store', () => {
 
       expect(useGraphStore.getState().pathMode.directed).toBe(true);
     });
+
+    test('setPathModeFrom clears to when same node is selected', () => {
+      useGraphStore.setState({
+        ...useGraphStore.getState(),
+        pathMode: { active: true, from: 'A', to: 'B', maxHops: 3, directed: false },
+      });
+
+      const { setPathModeFrom } = useGraphStore.getState();
+      setPathModeFrom('B');
+
+      const state = useGraphStore.getState();
+      expect(state.pathMode.from).toBe('B');
+      expect(state.pathMode.to).toBeNull();
+    });
+
+    test('setPathModeTo rejects same node as from', () => {
+      useGraphStore.setState({
+        ...useGraphStore.getState(),
+        pathMode: { active: true, from: 'A', to: null, maxHops: 3, directed: false },
+      });
+
+      const { setPathModeTo } = useGraphStore.getState();
+      setPathModeTo('A');
+
+      expect(useGraphStore.getState().pathMode.to).toBeNull();
+    });
   });
 
   describe('pathView', () => {
@@ -402,6 +431,96 @@ describe('graph-store', () => {
       expect(state.pathView.savedNodes?.has('X')).toBe(true); // But saved
       expect(state.pathView.pathNodeOrder).toEqual(['A', 'B']);
       expect(state.pathView.stats).toEqual(stats);
+      expect(state.pathView.paths).toEqual([
+        { from: 'A', to: 'B', maxHops: 3, directed: false, requestKey: 'A|B|3|false' },
+      ]);
+      expect(state.pathView.startNodeIds.has('A')).toBe(true);
+      expect(state.pathView.endNodeIds.has('B')).toBe(true);
+    });
+
+    test('enterPathView appends and merges path graphs while preserving original saved graph', () => {
+      const { addNodes, enterPathView } = useGraphStore.getState();
+
+      addNodes([{ data: { id: 'ROOT', type: 'BASIC', balance: '999' } }]);
+
+      enterPathView(
+        [
+          { data: { id: 'A', type: 'BASIC', balance: '100' } },
+          { data: { id: 'X', type: 'BASIC', balance: '200' } },
+          { data: { id: 'B', type: 'BASIC', balance: '300' } },
+        ],
+        [
+          { data: { id: 'A->X', source: 'A', target: 'X', txCount: 1, totalValue: '10' } },
+          { data: { id: 'X->B', source: 'X', target: 'B', txCount: 1, totalValue: '10' } },
+        ],
+        { nodeCount: 3, edgeCount: 2, maxHops: 3, shortestPath: 2, directed: false },
+        { from: 'A', to: 'B' },
+        { from: 'A', to: 'B', maxHops: 3, directed: false, requestKey: 'A|B|3|false' },
+      );
+
+      enterPathView(
+        [
+          { data: { id: 'A', type: 'BASIC', balance: '100' } },
+          { data: { id: 'X', type: 'BASIC', balance: '200' } },
+          { data: { id: 'C', type: 'BASIC', balance: '400' } },
+        ],
+        [
+          { data: { id: 'A->X', source: 'A', target: 'X', txCount: 1, totalValue: '10' } },
+          { data: { id: 'X->C', source: 'X', target: 'C', txCount: 1, totalValue: '10' } },
+        ],
+        { nodeCount: 3, edgeCount: 2, maxHops: 4, shortestPath: 2, directed: true },
+        { from: 'A', to: 'C' },
+        { from: 'A', to: 'C', maxHops: 4, directed: true, requestKey: 'A|C|4|true' },
+      );
+
+      const state = useGraphStore.getState();
+      expect(state.pathView.active).toBe(true);
+      expect(state.nodes.size).toBe(4); // A, X, B, C
+      expect(state.edges.size).toBe(3); // A->X, X->B, X->C
+      expect(state.pathView.savedNodes?.has('ROOT')).toBe(true);
+      expect(state.pathView.paths).toEqual([
+        { from: 'A', to: 'B', maxHops: 3, directed: false, requestKey: 'A|B|3|false' },
+        { from: 'A', to: 'C', maxHops: 4, directed: true, requestKey: 'A|C|4|true' },
+      ]);
+      expect(state.pathView.startNodeIds.has('A')).toBe(true);
+      expect(state.pathView.endNodeIds.has('B')).toBe(true);
+      expect(state.pathView.endNodeIds.has('C')).toBe(true);
+      expect(state.pathView.pathNodeOrder).toEqual(['A', 'X', 'B', 'C']);
+    });
+
+    test('enterPathView append keeps disconnected additions', () => {
+      const { enterPathView } = useGraphStore.getState();
+
+      enterPathView(
+        [
+          { data: { id: 'A', type: 'BASIC', balance: '100' } },
+          { data: { id: 'B', type: 'BASIC', balance: '200' } },
+        ],
+        [
+          { data: { id: 'A->B', source: 'A', target: 'B', txCount: 1, totalValue: '10' } },
+        ],
+        { nodeCount: 2, edgeCount: 1, maxHops: 3, shortestPath: 1, directed: false },
+        { from: 'A', to: 'B' },
+      );
+
+      enterPathView(
+        [
+          { data: { id: 'D', type: 'BASIC', balance: '300' } },
+          { data: { id: 'E', type: 'BASIC', balance: '400' } },
+        ],
+        [
+          { data: { id: 'D->E', source: 'D', target: 'E', txCount: 1, totalValue: '10' } },
+        ],
+        { nodeCount: 2, edgeCount: 1, maxHops: 3, shortestPath: 1, directed: false },
+        { from: 'D', to: 'E' },
+      );
+
+      const state = useGraphStore.getState();
+      expect(state.nodes.has('A')).toBe(true);
+      expect(state.nodes.has('D')).toBe(true);
+      expect(state.edges.has('A->B')).toBe(true);
+      expect(state.edges.has('D->E')).toBe(true);
+      expect(state.pathView.paths).toHaveLength(2);
     });
 
     test('exitPathView restores original graph', () => {
@@ -468,6 +587,9 @@ describe('graph-store', () => {
       expect(state.pathView.active).toBe(true);
       expect(state.nodes.size).toBe(2);
       expect(state.edges.size).toBe(1);
+      expect(state.pathView.paths).toEqual([
+        { from: 'A', to: 'B', maxHops: 3, directed: false, requestKey: 'A|B|3|false' },
+      ]);
     });
 
     test('findPath preserves requested endpoints even when node order tail differs', async () => {
@@ -511,6 +633,163 @@ describe('graph-store', () => {
       const state = useGraphStore.getState();
       expect(state.error).toBe('No path found between these addresses');
       expect(state.pathView.active).toBe(false);
+    });
+
+    test('findPath appends to active path view and keeps both endpoints highlighted', async () => {
+      mockApi.findSubgraph
+        .mockImplementationOnce(() =>
+          Promise.resolve({
+            found: true,
+            subgraph: {
+              nodes: [
+                { data: { id: 'A', type: 'BASIC', balance: '100' } },
+                { data: { id: 'X', type: 'BASIC', balance: '200' } },
+                { data: { id: 'B', type: 'BASIC', balance: '300' } },
+              ],
+              edges: [
+                { data: { id: 'A->X', source: 'A', target: 'X', txCount: 1, totalValue: '10' } },
+                { data: { id: 'X->B', source: 'X', target: 'B', txCount: 1, totalValue: '10' } },
+              ],
+            },
+            stats: { nodeCount: 3, edgeCount: 2, maxHops: 3, shortestPath: 2, directed: false },
+          })
+        )
+        .mockImplementationOnce(() =>
+          Promise.resolve({
+            found: true,
+            subgraph: {
+              nodes: [
+                { data: { id: 'A', type: 'BASIC', balance: '100' } },
+                { data: { id: 'X', type: 'BASIC', balance: '200' } },
+                { data: { id: 'C', type: 'BASIC', balance: '400' } },
+              ],
+              edges: [
+                { data: { id: 'A->X', source: 'A', target: 'X', txCount: 1, totalValue: '10' } },
+                { data: { id: 'X->C', source: 'X', target: 'C', txCount: 1, totalValue: '10' } },
+              ],
+            },
+            stats: { nodeCount: 3, edgeCount: 2, maxHops: 3, shortestPath: 2, directed: false },
+          })
+        );
+
+      const { findPath } = useGraphStore.getState();
+      await findPath('A', 'B');
+      await findPath('A', 'C');
+
+      const state = useGraphStore.getState();
+      expect(state.pathView.active).toBe(true);
+      expect(state.nodes.has('B')).toBe(true);
+      expect(state.nodes.has('C')).toBe(true);
+      expect(state.pathView.paths).toEqual([
+        { from: 'A', to: 'B', maxHops: 3, directed: false, requestKey: 'A|B|3|false' },
+        { from: 'A', to: 'C', maxHops: 3, directed: false, requestKey: 'A|C|3|false' },
+      ]);
+      expect(state.pathView.startNodeIds.has('A')).toBe(true);
+      expect(state.pathView.endNodeIds.has('B')).toBe(true);
+      expect(state.pathView.endNodeIds.has('C')).toBe(true);
+    });
+
+    test('findPath blocks append when max combined paths is reached', async () => {
+      const { findPath } = useGraphStore.getState();
+      useGraphStore.setState({
+        ...useGraphStore.getState(),
+        pathView: {
+          ...useGraphStore.getState().pathView,
+          active: true,
+          paths: Array.from({ length: 10 }, (_, index) => ({
+            from: `A${index}`,
+            to: `B${index}`,
+            maxHops: 3,
+            directed: false,
+            requestKey: `A${index}|B${index}|3|false`,
+          })),
+        },
+      });
+
+      await findPath('X', 'Y');
+
+      expect(useGraphStore.getState().error).toBe('You can combine up to 10 paths');
+      expect(mockApi.findSubgraph).not.toHaveBeenCalled();
+    });
+
+    test('loadPathSequence replaces with first path then appends subsequent paths', async () => {
+      mockApi.findSubgraph
+        .mockImplementationOnce(() =>
+          Promise.resolve({
+            found: true,
+            subgraph: {
+              nodes: [
+                { data: { id: 'A', type: 'BASIC', balance: '100' } },
+                { data: { id: 'B', type: 'BASIC', balance: '200' } },
+              ],
+              edges: [
+                { data: { id: 'A->B', source: 'A', target: 'B', txCount: 1, totalValue: '10' } },
+              ],
+            },
+            stats: { nodeCount: 2, edgeCount: 1, maxHops: 3, shortestPath: 1, directed: false },
+          })
+        )
+        .mockImplementationOnce(() =>
+          Promise.resolve({
+            found: true,
+            subgraph: {
+              nodes: [
+                { data: { id: 'A', type: 'BASIC', balance: '100' } },
+                { data: { id: 'C', type: 'BASIC', balance: '300' } },
+              ],
+              edges: [
+                { data: { id: 'A->C', source: 'A', target: 'C', txCount: 1, totalValue: '10' } },
+              ],
+            },
+            stats: { nodeCount: 2, edgeCount: 1, maxHops: 4, shortestPath: 1, directed: true },
+          })
+        );
+
+      const { loadPathSequence } = useGraphStore.getState();
+      await loadPathSequence([
+        { fromAddress: 'A', toAddress: 'B', maxHops: 3, directed: false, requestKey: 'A|B|3|false' },
+        { fromAddress: 'A', toAddress: 'C', maxHops: 4, directed: true, requestKey: 'A|C|4|true' },
+      ]);
+
+      const state = useGraphStore.getState();
+      expect(state.pathView.active).toBe(true);
+      expect(state.pathView.paths).toEqual([
+        { from: 'A', to: 'B', maxHops: 3, directed: false, requestKey: 'A|B|3|false' },
+        { from: 'A', to: 'C', maxHops: 4, directed: true, requestKey: 'A|C|4|true' },
+      ]);
+      expect(state.nodes.has('B')).toBe(true);
+      expect(state.nodes.has('C')).toBe(true);
+    });
+
+    test('loadPathSequence keeps successful first path when later path fails', async () => {
+      mockApi.findSubgraph
+        .mockImplementationOnce(() =>
+          Promise.resolve({
+            found: true,
+            subgraph: {
+              nodes: [
+                { data: { id: 'A', type: 'BASIC', balance: '100' } },
+                { data: { id: 'B', type: 'BASIC', balance: '200' } },
+              ],
+              edges: [
+                { data: { id: 'A->B', source: 'A', target: 'B', txCount: 1, totalValue: '10' } },
+              ],
+            },
+            stats: { nodeCount: 2, edgeCount: 1, maxHops: 3, shortestPath: 1, directed: false },
+          })
+        )
+        .mockImplementationOnce(() => Promise.resolve({ found: false }));
+
+      const { loadPathSequence } = useGraphStore.getState();
+      await loadPathSequence([
+        { fromAddress: 'A', toAddress: 'B', maxHops: 3, directed: false, requestKey: 'A|B|3|false' },
+        { fromAddress: 'A', toAddress: 'Z', maxHops: 3, directed: false, requestKey: 'A|Z|3|false' },
+      ]);
+
+      const state = useGraphStore.getState();
+      expect(state.pathView.active).toBe(true);
+      expect(state.pathView.paths).toHaveLength(1);
+      expect(state.pathView.paths[0]?.to).toBe('B');
     });
 
     test('loadInitialData fetches latest blocks', async () => {
