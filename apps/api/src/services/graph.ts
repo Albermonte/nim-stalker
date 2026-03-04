@@ -11,13 +11,12 @@ interface ExpandOptions {
 
 export class GraphService {
   /**
-   * Expand graph from given addresses in specified direction
+   * Build the MATCH clause, filter conditions, and params shared by expand() and expandCount()
    */
-  async expand(options: ExpandOptions): Promise<GraphResponse> {
+  private buildExpandQuery(options: ExpandOptions) {
     const { addresses, direction, filters } = options;
     const limit = filters?.limit;
 
-    // Build direction clause for TRANSACTED_WITH
     let matchClause: string;
     if (direction === 'outgoing') {
       matchClause = 'MATCH (a)-[r:TRANSACTED_WITH]->(b) WHERE a.id IN $addresses';
@@ -27,7 +26,6 @@ export class GraphService {
       matchClause = 'MATCH (a)-[r:TRANSACTED_WITH]-(b) WHERE a.id IN $addresses';
     }
 
-    // Build filter conditions
     const conditions: string[] = [];
     const params: Record<string, unknown> = { addresses };
     if (limit != null) params.limit = neo4jInt(limit);
@@ -50,6 +48,30 @@ export class GraphService {
     }
 
     const whereExtra = conditions.length > 0 ? ' AND ' + conditions.join(' AND ') : '';
+
+    return { matchClause, whereExtra, params, limit };
+  }
+
+  /**
+   * Cheap count-only query — returns the number of edges matching the expand criteria
+   */
+  async expandCount(options: ExpandOptions): Promise<{ edgeCount: number }> {
+    const { matchClause, whereExtra, params } = this.buildExpandQuery(options);
+    return readTx(async (tx) => {
+      const result = await tx.run(
+        `${matchClause}${whereExtra} RETURN count(r) AS edgeCount`,
+        params
+      );
+      return { edgeCount: toNumber(result.records[0].get('edgeCount')) };
+    });
+  }
+
+  /**
+   * Expand graph from given addresses in specified direction
+   */
+  async expand(options: ExpandOptions): Promise<GraphResponse> {
+    const { matchClause, whereExtra, params, limit } = this.buildExpandQuery(options);
+    const { addresses, direction } = options;
 
     // For directed queries, use bound variables; for 'both', use startNode/endNode to preserve direction
     const returnClause = direction === 'both'

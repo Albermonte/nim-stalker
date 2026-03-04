@@ -274,6 +274,32 @@ export class ApiClient {
     }>(`/transactions/recent${query ? `?${query}` : ''}`);
   }
 
+  private serializeExpandFilters(filters?: FilterState, includeLimit = false) {
+    if (!filters) return undefined;
+    return {
+      minTimestamp: filters.minTimestamp,
+      maxTimestamp: filters.maxTimestamp,
+      minValue: filters.minValue?.toString(),
+      maxValue: filters.maxValue?.toString(),
+      ...(includeLimit && filters.limit != null && { limit: filters.limit }),
+    };
+  }
+
+  async expandGraphCount(
+    addresses: string[],
+    direction: Direction = 'both',
+    filters?: FilterState
+  ): Promise<{ edgeCount: number }> {
+    return this.fetch<{ edgeCount: number }>('/graph/expand/count', {
+      method: 'POST',
+      body: JSON.stringify({
+        addresses,
+        direction,
+        filters: this.serializeExpandFilters(filters),
+      }),
+    });
+  }
+
   async expandGraph(
     addresses: string[],
     direction: Direction = 'both',
@@ -284,15 +310,7 @@ export class ApiClient {
       body: JSON.stringify({
         addresses,
         direction,
-        filters: filters
-          ? {
-              minTimestamp: filters.minTimestamp,
-              maxTimestamp: filters.maxTimestamp,
-              minValue: filters.minValue?.toString(),
-              maxValue: filters.maxValue?.toString(),
-              limit: filters.limit,
-            }
-          : undefined,
+        filters: this.serializeExpandFilters(filters, true),
       }),
     });
   }

@@ -96,6 +96,12 @@ interface GraphState {
   layoutMode: LayoutMode;
   /** When true, loadInitialData() is skipped (deep link pages set this) */
   skipInitialLoad: boolean;
+  /** Progress state for address search with count-first flow */
+  searchProgress: {
+    phase: 'counting' | 'fetching' | 'rendering' | 'done';
+    loaded: number;
+    total: number;
+  };
   /** Addresses already synced via live balance endpoint in this session */
   balanceSyncedIds: Set<string>;
 }
@@ -176,6 +182,7 @@ const initialState: GraphState = {
   },
   layoutMode: 'fcose',
   skipInitialLoad: false,
+  searchProgress: { phase: 'done', loaded: 0, total: 0 },
   balanceSyncedIds: new Set(),
 };
 
@@ -347,39 +354,73 @@ export const useGraphStore = create<GraphState & GraphActions>()(
       setError(null);
 
       const formattedAddress = formatNimiqAddress(address);
+      const RENDER_CHUNK_SIZE = 200;
 
       try {
-        // Expand from the address (data comes from batch/live indexing)
-        const result = await api.expandGraph([address], 'both', filters);
+        // Phase 1: Count — cheap query, no data transfer
+        set({ searchProgress: { phase: 'counting', loaded: 0, total: 0 } });
+        const { edgeCount } = await api.expandGraphCount([address], 'both', filters);
+
+        // Phase 2: Confirm — show exact count BEFORE fetching data
+        let fetchLimit: number | undefined;
+        if (edgeCount > LARGE_GRAPH_THRESHOLD) {
+          const loadAll = window.confirm(
+            `This address has ${edgeCount} connections. Loading all may slow down the visualization.\n\nClick OK to load all, or Cancel to load the top ${LARGE_GRAPH_THRESHOLD}.`,
+          );
+          if (!loadAll) {
+            fetchLimit = LARGE_GRAPH_THRESHOLD;
+          }
+        }
+
+        // Phase 3: Fetch — pass limit so backend truncates (no wasted bandwidth)
+        const fetchFilters = fetchLimit != null
+          ? { ...filters, limit: fetchLimit }
+          : filters;
+        set({ searchProgress: { phase: 'fetching', loaded: 0, total: fetchLimit ?? edgeCount } });
+        const result = await api.expandGraph([address], 'both', fetchFilters);
+        set({ searchProgress: { phase: 'fetching', loaded: result.edges.length, total: fetchLimit ?? edgeCount } });
 
         // Clear existing graph before adding new results
         clearGraph();
+        // Re-set skipInitialLoad since clearGraph resets it to false
+        set({ skipInitialLoad: true });
 
         // Anchor deterministic layouts (e.g. BiFlow) on initial render
         set({ lastExpandedNodeId: formattedAddress });
 
-        let nodesToLoad = result.nodes;
-        let edgesToLoad = result.edges;
+        const nodesToLoad = result.nodes;
+        const edgesToLoad = result.edges;
 
-        if (result.nodes.length > LARGE_GRAPH_THRESHOLD) {
-          const loadAll = window.confirm(
-            `This address has ${result.nodes.length} connections. Loading all may slow down the visualization.\n\nClick OK to load all, or Cancel to load the top ${LARGE_GRAPH_THRESHOLD}.`,
-          );
-          if (!loadAll) {
-            nodesToLoad = result.nodes.slice(0, LARGE_GRAPH_THRESHOLD);
-            const nodeIds = new Set(nodesToLoad.map(n => n.data.id));
-            if (!nodeIds.has(formattedAddress)) {
-              const anchor = result.nodes.find(n => n.data.id === formattedAddress);
-              if (anchor) nodesToLoad.push(anchor);
-              nodeIds.add(formattedAddress);
-            }
-            edgesToLoad = result.edges.filter(
-              e => nodeIds.has(e.data.source) && nodeIds.has(e.data.target),
-            );
+        // Phase 4: Render — chunk large results to keep the browser responsive
+        const totalElements = nodesToLoad.length + edgesToLoad.length;
+        if (totalElements > LARGE_GRAPH_THRESHOLD) {
+          set({ searchProgress: { phase: 'rendering', loaded: 0, total: totalElements } });
+
+          // Yield so the progress bar paints
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+
+          let inserted = 0;
+
+          // Add nodes in chunks
+          for (let i = 0; i < nodesToLoad.length; i += RENDER_CHUNK_SIZE) {
+            const chunk = nodesToLoad.slice(i, i + RENDER_CHUNK_SIZE);
+            get().addGraphData(chunk, []);
+            inserted += chunk.length;
+            set({ searchProgress: { phase: 'rendering', loaded: inserted, total: totalElements } });
+            await new Promise((resolve) => requestAnimationFrame(resolve));
           }
-        }
 
-        addGraphData(nodesToLoad, edgesToLoad);
+          // Add edges in chunks
+          for (let i = 0; i < edgesToLoad.length; i += RENDER_CHUNK_SIZE) {
+            const chunk = edgesToLoad.slice(i, i + RENDER_CHUNK_SIZE);
+            get().addGraphData([], chunk);
+            inserted += chunk.length;
+            set({ searchProgress: { phase: 'rendering', loaded: inserted, total: totalElements } });
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+          }
+        } else {
+          addGraphData(nodesToLoad, edgesToLoad);
+        }
 
         // Select the searched node (use formatted address to match backend IDs)
         if (result.nodes.length > 0) {
@@ -392,6 +433,7 @@ export const useGraphStore = create<GraphState & GraphActions>()(
         setError(err instanceof Error ? err.message : 'Failed to search address');
       } finally {
         setLoading(false);
+        set({ searchProgress: { phase: 'done', loaded: 0, total: 0 } });
         // Remove from in-flight
         const current = get().inFlightRequests;
         const newSet = new Set(current);

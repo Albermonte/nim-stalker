@@ -9,59 +9,82 @@ import { getAddressLabelService } from '../lib/address-labels';
 import { poolAll } from '../lib/concurrency';
 import { enforceSensitiveEndpointPolicy } from '../lib/security';
 
+/**
+ * Validate addresses and parse value filters from an expand request body.
+ * Returns parsed data or sets an error status and returns null.
+ */
+function parseExpandBody(
+  body: { addresses: string[]; direction?: 'incoming' | 'outgoing' | 'both'; filters?: { minTimestamp?: number; maxTimestamp?: number; minValue?: string; maxValue?: string; limit?: number } },
+  set: { status: number },
+) {
+  const invalidAddresses = body.addresses.filter((addr) => !isValidNimiqAddress(addr));
+  if (invalidAddresses.length > 0) {
+    set.status = 400;
+    return { error: 'Invalid address format', invalidAddresses } as const;
+  }
+
+  const formattedAddresses = body.addresses.map(formatAddress);
+  let minValue: bigint | undefined;
+  let maxValue: bigint | undefined;
+
+  if (body.filters?.minValue != null) {
+    if (!/^\d+$/.test(body.filters.minValue)) {
+      set.status = 400;
+      return { error: 'Invalid minValue: expected a positive integer string' } as const;
+    }
+    minValue = BigInt(body.filters.minValue);
+  }
+
+  if (body.filters?.maxValue != null) {
+    if (!/^\d+$/.test(body.filters.maxValue)) {
+      set.status = 400;
+      return { error: 'Invalid maxValue: expected a positive integer string' } as const;
+    }
+    maxValue = BigInt(body.filters.maxValue);
+  }
+
+  if (minValue != null && maxValue != null && minValue > maxValue) {
+    set.status = 400;
+    return { error: 'Invalid value range: minValue cannot be greater than maxValue' } as const;
+  }
+
+  return { formattedAddresses, direction: body.direction || 'both', minValue, maxValue, filters: body.filters };
+}
+
+const expandFilterSchema = t.Object({
+  minTimestamp: t.Optional(t.Number()),
+  maxTimestamp: t.Optional(t.Number()),
+  minValue: t.Optional(t.String()),
+  maxValue: t.Optional(t.String()),
+});
+
+const expandBodyBase = {
+  addresses: t.Array(t.String(), { minItems: 1, maxItems: 50 }),
+  direction: t.Optional(
+    t.Union([t.Literal('incoming'), t.Literal('outgoing'), t.Literal('both')])
+  ),
+};
+
 export const graphRoutes = new Elysia({ prefix: '/graph' })
   // POST /graph/expand - Expand graph from address(es)
   .post(
     '/expand',
     async ({ body, set }) => {
-      const { addresses, direction, filters } = body;
-
-      // Validate all addresses
-      const invalidAddresses = addresses.filter((addr) => !isValidNimiqAddress(addr));
-      if (invalidAddresses.length > 0) {
-        set.status = 400;
-        return { error: 'Invalid address format', invalidAddresses };
-      }
-
-      // Format addresses
-      const formattedAddresses = addresses.map(formatAddress);
-
-      let minValue: bigint | undefined;
-      let maxValue: bigint | undefined;
-
-      if (filters?.minValue != null) {
-        if (!/^\d+$/.test(filters.minValue)) {
-          set.status = 400;
-          return { error: 'Invalid minValue: expected a positive integer string' };
-        }
-        minValue = BigInt(filters.minValue);
-      }
-
-      if (filters?.maxValue != null) {
-        if (!/^\d+$/.test(filters.maxValue)) {
-          set.status = 400;
-          return { error: 'Invalid maxValue: expected a positive integer string' };
-        }
-        maxValue = BigInt(filters.maxValue);
-      }
-
-      if (minValue != null && maxValue != null && minValue > maxValue) {
-        set.status = 400;
-        return { error: 'Invalid value range: minValue cannot be greater than maxValue' };
-      }
+      const parsed = parseExpandBody(body, set);
+      if ('error' in parsed) return parsed;
 
       try {
         const graphService = getGraphService();
         const result = await graphService.expand({
-          addresses: formattedAddresses,
-          direction: direction || 'both',
-          filters: filters
+          addresses: parsed.formattedAddresses,
+          direction: parsed.direction,
+          filters: parsed.filters
             ? {
-                minTimestamp: filters.minTimestamp,
-                maxTimestamp: filters.maxTimestamp,
-                minValue,
-                maxValue,
-                limit: filters.limit,
+                minTimestamp: parsed.filters.minTimestamp,
+                maxTimestamp: parsed.filters.maxTimestamp,
+                minValue: parsed.minValue,
+                maxValue: parsed.maxValue,
+                limit: parsed.filters.limit,
               }
             : undefined,
         });
@@ -69,8 +92,8 @@ export const graphRoutes = new Elysia({ prefix: '/graph' })
         return result;
       } catch (error) {
         console.error('[POST /graph/expand] Failed to expand graph:', {
-          addresses: formattedAddresses,
-          direction,
+          addresses: parsed.formattedAddresses,
+          direction: parsed.direction,
           error: error instanceof Error ? error.message : error,
         });
         set.status = 500;
@@ -79,19 +102,51 @@ export const graphRoutes = new Elysia({ prefix: '/graph' })
     },
     {
       body: t.Object({
-        addresses: t.Array(t.String(), { minItems: 1, maxItems: 50 }),
-        direction: t.Optional(
-          t.Union([t.Literal('incoming'), t.Literal('outgoing'), t.Literal('both')])
-        ),
-        filters: t.Optional(
-          t.Object({
-            minTimestamp: t.Optional(t.Number()),
-            maxTimestamp: t.Optional(t.Number()),
-            minValue: t.Optional(t.String()),
-            maxValue: t.Optional(t.String()),
-            limit: t.Optional(t.Number({ minimum: 1, maximum: 500 })),
-          })
-        ),
+        ...expandBodyBase,
+        filters: t.Optional(t.Object({
+          ...expandFilterSchema.properties,
+          limit: t.Optional(t.Number({ minimum: 1, maximum: 500 })),
+        })),
+      }),
+    }
+  )
+  // POST /graph/expand/count - Cheap count of edges matching expand criteria
+  .post(
+    '/expand/count',
+    async ({ body, set }) => {
+      const parsed = parseExpandBody(body, set);
+      if ('error' in parsed) return parsed;
+
+      try {
+        const graphService = getGraphService();
+        const result = await graphService.expandCount({
+          addresses: parsed.formattedAddresses,
+          direction: parsed.direction,
+          filters: parsed.filters
+            ? {
+                minTimestamp: parsed.filters.minTimestamp,
+                maxTimestamp: parsed.filters.maxTimestamp,
+                minValue: parsed.minValue,
+                maxValue: parsed.maxValue,
+              }
+            : undefined,
+        });
+
+        return result;
+      } catch (error) {
+        console.error('[POST /graph/expand/count] Failed to count expand:', {
+          addresses: parsed.formattedAddresses,
+          direction: parsed.direction,
+          error: error instanceof Error ? error.message : error,
+        });
+        set.status = 500;
+        return { error: 'Failed to count expand' };
+      }
+    },
+    {
+      body: t.Object({
+        ...expandBodyBase,
+        filters: t.Optional(expandFilterSchema),
       }),
     }
   )

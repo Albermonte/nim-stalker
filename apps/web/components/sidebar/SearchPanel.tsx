@@ -15,7 +15,11 @@ function SearchPanelInner() {
   const [addAddressInput, setAddAddressInput] = useState('');
   const [searchError, setSearchError] = useState<string | null>(null);
   const [addError, setAddError] = useState<string | null>(null);
-  const { searchAddress, addAddress, loading, getCytoscapeElements } = useGraphStore();
+  const searchAddress = useGraphStore((s) => s.searchAddress);
+  const addAddress = useGraphStore((s) => s.addAddress);
+  const loading = useGraphStore((s) => s.loading);
+  const getCytoscapeElements = useGraphStore((s) => s.getCytoscapeElements);
+  const searchProgress = useGraphStore((s) => s.searchProgress);
 
   const handleExport = useCallback((format: ExportFormat) => {
     const { nodes, edges } = getCytoscapeElements();
@@ -124,6 +128,29 @@ function SearchPanelInner() {
           >
             {loading ? 'Searching...' : 'Search'}
           </button>
+
+          {searchProgress.phase !== 'done' && (
+            <div className="space-y-1">
+              {searchProgress.phase === 'counting' ? (
+                <div className="nq-pulse text-nq-black font-bold uppercase tracking-wider text-xs">
+                  Counting connections...
+                </div>
+              ) : (
+                <>
+                  <div className="w-full bg-nq-cream border-2 border-nq-black rounded-sm overflow-hidden h-4">
+                    <div
+                      className="h-full bg-nq-pink transition-all duration-300 ease-out"
+                      style={{ width: `${searchProgress.total > 0 ? Math.round((searchProgress.loaded / searchProgress.total) * 100) : 0}%` }}
+                    />
+                  </div>
+                  <p className="text-xs uppercase tracking-wide font-semibold">
+                    {searchProgress.phase === 'fetching' ? 'Fetching' : 'Rendering'}
+                    {' '}{searchProgress.loaded}/{searchProgress.total}
+                  </p>
+                </>
+              )}
+            </div>
+          )}
 
           {searchError && (
             <p className="text-nq-yellow text-xs font-bold uppercase bg-nq-black/20 rounded-lg px-2 py-1">{searchError}</p>
