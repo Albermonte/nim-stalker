@@ -15,7 +15,7 @@ export class GraphService {
    */
   async expand(options: ExpandOptions): Promise<GraphResponse> {
     const { addresses, direction, filters } = options;
-    const limit = filters?.limit ?? 100;
+    const limit = filters?.limit;
 
     // Build direction clause for TRANSACTED_WITH
     let matchClause: string;
@@ -29,7 +29,8 @@ export class GraphService {
 
     // Build filter conditions
     const conditions: string[] = [];
-    const params: Record<string, unknown> = { addresses, limit: neo4jInt(limit) };
+    const params: Record<string, unknown> = { addresses };
+    if (limit != null) params.limit = neo4jInt(limit);
 
     if (filters?.minTimestamp) {
       conditions.push('r.lastTxAt >= $minTimestamp');
@@ -72,7 +73,7 @@ export class GraphService {
                 r.txCount AS txCount, r.totalValue AS totalValue,
                 r.firstTxAt AS firstTxAt, r.lastTxAt AS lastTxAt
          ORDER BY r.txCount DESC
-         LIMIT $limit`,
+         ${limit != null ? 'LIMIT $limit' : ''}`,
         params
       );
 

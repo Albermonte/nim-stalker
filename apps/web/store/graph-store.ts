@@ -24,6 +24,7 @@ export type LayoutMode =
 
 const LIVE_BALANCE_BATCH_SIZE = 100;
 export const MAX_COMBINED_PATHS = 10;
+const LARGE_GRAPH_THRESHOLD = 500;
 let latestHomeReloadRequestId = 0;
 
 export interface PathRequestMetadata {
@@ -357,7 +358,28 @@ export const useGraphStore = create<GraphState & GraphActions>()(
         // Anchor deterministic layouts (e.g. BiFlow) on initial render
         set({ lastExpandedNodeId: formattedAddress });
 
-        addGraphData(result.nodes, result.edges);
+        let nodesToLoad = result.nodes;
+        let edgesToLoad = result.edges;
+
+        if (result.nodes.length > LARGE_GRAPH_THRESHOLD) {
+          const loadAll = window.confirm(
+            `This address has ${result.nodes.length} connections. Loading all may slow down the visualization.\n\nClick OK to load all, or Cancel to load the top ${LARGE_GRAPH_THRESHOLD}.`,
+          );
+          if (!loadAll) {
+            nodesToLoad = result.nodes.slice(0, LARGE_GRAPH_THRESHOLD);
+            const nodeIds = new Set(nodesToLoad.map(n => n.data.id));
+            if (!nodeIds.has(formattedAddress)) {
+              const anchor = result.nodes.find(n => n.data.id === formattedAddress);
+              if (anchor) nodesToLoad.push(anchor);
+              nodeIds.add(formattedAddress);
+            }
+            edgesToLoad = result.edges.filter(
+              e => nodeIds.has(e.data.source) && nodeIds.has(e.data.target),
+            );
+          }
+        }
+
+        addGraphData(nodesToLoad, edgesToLoad);
 
         // Select the searched node (use formatted address to match backend IDs)
         if (result.nodes.length > 0) {
