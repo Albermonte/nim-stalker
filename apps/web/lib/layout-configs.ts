@@ -307,6 +307,17 @@ export function getIncrementalColaOptions(): Record<string, unknown> {
   };
 }
 
+/** Get fcose layout options optimized for large graphs (500+ nodes) */
+export function getLargeGraphLayoutOptions(nodeCount: number): Record<string, unknown> {
+  return {
+    ...getLayoutOptions('fcose', nodeCount),
+    animate: nodeCount <= 1000,
+    animationDuration: 500,
+    nodeDimensionsIncludeLabels: false,
+    numIter: 1000,
+  };
+}
+
 /** Get incremental layout options for any supported layout mode */
 export function getIncrementalOptionsForMode(mode: LayoutMode): Record<string, unknown> | null {
   switch (mode) {
